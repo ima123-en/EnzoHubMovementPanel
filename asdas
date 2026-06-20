@@ -16,15 +16,16 @@ end
 
 local _G = getgenv() or _G
 
-_G.InvisStealAngle     = _G.InvisStealAngle or 233
-_G.SinkSliderValue     = _G.SinkSliderValue or 5
-_G.AutoRecoverLagback  = (_G.AutoRecoverLagback ~= false)
-_G.AutoInvisDuringSteal = (_G.AutoInvisDuringSteal == true)
-_G.INVISIBLE_STEAL_KEY = _G.INVISIBLE_STEAL_KEY or "I"
-_G.FLOAT_KEY           = _G.FLOAT_KEY or "B"
+_G.InvisStealAngle       = _G.InvisStealAngle or 233
+_G.SinkSliderValue       = _G.SinkSliderValue or 5
+_G.AutoRecoverLagback    = (_G.AutoRecoverLagback ~= false)
+_G.AutoInvisDuringSteal  = (_G.AutoInvisDuringSteal == true)
+_G.INVISIBLE_STEAL_KEY   = _G.INVISIBLE_STEAL_KEY or "I"
+_G.FLOAT_KEY             = _G.FLOAT_KEY or "B"
 _G.invisibleStealEnabled = _G.invisibleStealEnabled or false
-_G.RecoveryInProgress  = _G.RecoveryInProgress or false
-_G.InvisGuiScale       = _G.InvisGuiScale or 50
+_G.RecoveryInProgress    = _G.RecoveryInProgress or false
+_G.InvisGuiScale         = _G.InvisGuiScale or 50
+_G.EnzoMovementDisabled  = _G.EnzoMovementDisabled or false -- verhindert Re‑Aktivierung nach Kill
 
 local SAVE_KEY = "InvisSteal_Settings_" .. LocalPlayer.UserId
 
@@ -32,13 +33,13 @@ local function SaveSettings()
     pcall(function()
         if writefile then
             writefile(SAVE_KEY .. ".json", HttpService:JSONEncode({
-                InvisStealAngle     = _G.InvisStealAngle,
-                SinkSliderValue     = _G.SinkSliderValue,
-                AutoRecoverLagback  = _G.AutoRecoverLagback,
+                InvisStealAngle      = _G.InvisStealAngle,
+                SinkSliderValue      = _G.SinkSliderValue,
+                AutoRecoverLagback   = _G.AutoRecoverLagback,
                 AutoInvisDuringSteal = _G.AutoInvisDuringSteal,
-                INVISIBLE_STEAL_KEY = _G.INVISIBLE_STEAL_KEY,
-                FLOAT_KEY           = _G.FLOAT_KEY,
-                InvisGuiScale       = _G.InvisGuiScale
+                INVISIBLE_STEAL_KEY  = _G.INVISIBLE_STEAL_KEY,
+                FLOAT_KEY            = _G.FLOAT_KEY,
+                InvisGuiScale        = _G.InvisGuiScale
             }))
         end
     end)
@@ -50,7 +51,7 @@ local function LoadSettings()
             local data = HttpService:JSONDecode(readfile(SAVE_KEY .. ".json"))
             if data.InvisStealAngle        then _G.InvisStealAngle        = data.InvisStealAngle end
             if data.SinkSliderValue        then _G.SinkSliderValue        = data.SinkSliderValue end
-            if data.AutoRecoverLagback ~= nil  then _G.AutoRecoverLagback  = data.AutoRecoverLagback end
+            if data.AutoRecoverLagback ~= nil   then _G.AutoRecoverLagback   = data.AutoRecoverLagback end
             if data.AutoInvisDuringSteal ~= nil then _G.AutoInvisDuringSteal = data.AutoInvisDuringSteal end
             if data.INVISIBLE_STEAL_KEY    then _G.INVISIBLE_STEAL_KEY    = data.INVISIBLE_STEAL_KEY end
             if data.FLOAT_KEY              then _G.FLOAT_KEY              = data.FLOAT_KEY end
@@ -247,9 +248,25 @@ local function animationTrickery()
     end)
 end
 
+local function hardDisconnectAll()
+    if connection then
+        pcall(function() connection:Disconnect() end)
+        connection = nil
+    end
+    for _, c in ipairs(folderConnections) do
+        pcall(function()
+            if c then c:Disconnect() end
+        end)
+    end
+    folderConnections = {}
+end
+
 local function turnOff()
     clearAllGhosts()
-    if not animPlaying then return end
+    if not animPlaying then
+        _G.invisibleStealEnabled = false
+        return
+    end
     animPlaying = false
     _G.invisibleStealEnabled = false
     local character = LocalPlayer.Character
@@ -262,18 +279,7 @@ local function turnOff()
         end)
     end
     tracks = {}
-    if connection then
-        pcall(function() connection:Disconnect() end)
-        connection = nil
-    end
-    for _, c in ipairs(folderConnections) do
-        pcall(function()
-            if c then
-                c:Disconnect()
-            end
-        end)
-    end
-    folderConnections = {}
+    hardDisconnectAll()
     revertClone()
     if humanoid and humanoid.Health > 0 then
         task.wait(0.1)
@@ -284,6 +290,7 @@ local function turnOff()
 end
 
 local function turnOn()
+    if _G.EnzoMovementDisabled then return end
     if animPlaying then return end
     local character = LocalPlayer.Character
     if not character then
@@ -315,6 +322,7 @@ local function turnOn()
     local lastSetPosition = nil
     local skipFrames = 5
     connection = RunService.PreSimulation:Connect(function()
+        if _G.EnzoMovementDisabled then return end
         local char = LocalPlayer.Character
         if not char then return end
         local hum = char:FindFirstChild("Humanoid")
@@ -363,6 +371,7 @@ local function turnOn()
 end
 
 _G.toggleInvisibleSteal = function()
+    if _G.EnzoMovementDisabled then return end
     if animPlaying then
         turnOff()
     else
@@ -421,6 +430,7 @@ LocalPlayer.CharacterAdded:Connect(function()
     setupDeathListener()
 end)
 
+-- AntiDie bleibt wie gehabt
 task.spawn(function()
     local currentConnection = nil
     _G.AntiDieConnection = nil
@@ -452,11 +462,17 @@ task.spawn(function()
     end)
 end)
 
+-- Auto Invis During Steal
 task.spawn(function()
     local wasStealingForInvis = false
     local autoEnabledInvis = false
     task.wait(1)
     while task.wait(0.1) do
+        if _G.EnzoMovementDisabled then
+            wasStealingForInvis = false
+            autoEnabledInvis = false
+            continue
+        end
         if _G.AutoInvisDuringSteal == false then
             wasStealingForInvis = false
             autoEnabledInvis = false
@@ -465,6 +481,7 @@ task.spawn(function()
             if isStealing and not wasStealingForInvis then
                 if not _G.invisibleStealEnabled and _G.toggleInvisibleSteal then
                     task.delay(0.25, function()
+                        if _G.EnzoMovementDisabled then return end
                         if LocalPlayer:GetAttribute("Stealing") and not _G.invisibleStealEnabled then
                             pcall(_G.toggleInvisibleSteal)
                             autoEnabledInvis = true
@@ -486,6 +503,8 @@ task.spawn(function()
         end
     end
 end)
+
+-- Float
 
 local FloatEnabled = false
 local FloatConnection
@@ -517,9 +536,11 @@ local function DestroyFloatPlatform()
 end
 
 local function StartFloat()
+    if _G.EnzoMovementDisabled then return end
     CreateFloatPlatform()
     if FloatConnection then return end
     FloatConnection = RunService.Heartbeat:Connect(function()
+        if _G.EnzoMovementDisabled then return end
         if not FloatEnabled then return end
         local char = LocalPlayer.Character
         if not char then return end
@@ -907,6 +928,7 @@ do
     upd(_G.invisibleStealEnabled, true)
 
     btn.MouseButton1Click:Connect(function()
+        if _G.EnzoMovementDisabled then return end
         if _G.toggleInvisibleSteal then
             pcall(_G.toggleInvisibleSteal)
             upd(_G.invisibleStealEnabled, false)
@@ -996,6 +1018,7 @@ do
     end)
 
     btn.MouseButton1Click:Connect(function()
+        if _G.EnzoMovementDisabled then return end
         FloatEnabled = not FloatEnabled
         updateFloatButton(FloatEnabled, false)
         if FloatEnabled then
@@ -1030,6 +1053,7 @@ end
 local unwalkUpdate = createOnOffRow("Unwalk:", 118, UnwalkState, unwalkToggleCallback)
 
 RunService.Heartbeat:Connect(function()
+    if _G.EnzoMovementDisabled then return end
     if UnwalkState.value then
         disableAnimations()
     end
@@ -1210,6 +1234,7 @@ end)
 -- Keybind Input
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
+    if _G.EnzoMovementDisabled then return end
 
     if _G.WaitingForInvisKey and input.UserInputType == Enum.UserInputType.Keyboard then
         _G.WaitingForInvisKey = false
@@ -1296,11 +1321,10 @@ end
 task.spawn(function()
     while task.wait(0.2) do
         if not HubMovementEnabled() then
-            -- Invis Steal aus
+            -- gleiches Verhalten wie EnzoInvisPanelToggle
             if _G.invisibleStealEnabled and _G.toggleInvisibleSteal then
                 pcall(_G.toggleInvisibleSteal)
             end
-            -- Float aus
             if FloatEnabled then
                 FloatEnabled = false
                 if _G.UpdateFloatButton then
@@ -1308,10 +1332,10 @@ task.spawn(function()
                 end
                 StopFloat()
             end
-            -- Panel schließen
             if ScreenGui and ScreenGui.Parent then
                 ScreenGui:Destroy()
             end
+            _G.EnzoMovementDisabled = true
             break
         end
     end
@@ -1339,9 +1363,15 @@ do
             StopFloat()
         end
 
-        -- Panel schließen
+        -- Unwalk aus
+        UnwalkState.value = false
+
+        -- GUI killen
         if ScreenGui and ScreenGui.Parent then
             ScreenGui:Destroy()
         end
+
+        -- Movement komplett disablen (keine Keybinds mehr)
+        _G.EnzoMovementDisabled = true
     end
 end
