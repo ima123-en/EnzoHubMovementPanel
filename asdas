@@ -10,8 +10,55 @@ local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
-if PlayerGui:FindFirstChild("InvisStealPanel") then
-    PlayerGui:FindFirstChild("InvisStealPanel"):Destroy()
+local rootGui = PlayerGui:WaitForChild("EnzoHubUI", 5)
+local enzoToggle
+if rootGui then
+	local mainWindow = rootGui:FindFirstChild("MainWindow")
+	if mainWindow then
+		local content = mainWindow:FindFirstChild("ContentFrame") or mainWindow:FindFirstChildWhichIsA("Frame")
+		if content then
+			local pages = content:FindFirstChild("ESP") or content
+		end
+	end
+end
+
+local movementToggleState = false
+
+do
+	local mainWindow = rootGui and rootGui:FindFirstChild("MainWindow")
+	if mainWindow then
+		local cf = mainWindow:FindFirstChild("ContentFrame") or mainWindow
+		local pages = {}
+		for _, f in ipairs(cf:GetChildren()) do
+			if f:IsA("Frame") and f.Name:match("Page$") then
+				pages[f.Name:gsub("Page","")] = f
+			end
+		end
+		local uiPage = pages["UI"]
+		if uiPage then
+			for _, child in ipairs(uiPage:GetChildren()) do
+				if child:IsA("Frame") then
+					local label = child:FindFirstChildWhichIsA("TextLabel")
+					local btn = child:FindFirstChildWhichIsA("TextButton")
+					if label and btn and label.Text == "Movement Panel" then
+						enzoToggle = btn
+						break
+					end
+				end
+			end
+		end
+	end
+end
+
+if not PlayerGui:FindFirstChild("InvisStealPanel") and not movementToggleState then
+	if enzoToggle then
+		movementToggleState = true
+	end
+end
+
+if not movementToggleState then
+	script:Destroy()
+	return
 end
 
 local _G = getgenv() or _G
@@ -62,7 +109,6 @@ end
 LoadSettings()
 
 local isInteractingWithSlider = false
-
 local animPlaying = false
 local tracks = {}
 local clone, oldRoot, hip, connection
@@ -213,8 +259,10 @@ local function revertClone()
     end
     oldRoot = nil
     clone = nil
-    if character and humanoid then
-        humanoid.HipHeight = hip or 0
+    local character2 = LocalPlayer.Character
+    local humanoid2 = character2 and character2:FindFirstChild("Humanoid")
+    if character2 and humanoid2 then
+        humanoid2.HipHeight = hip or 0
     end
     clearAllGhosts()
 end
@@ -457,6 +505,9 @@ task.spawn(function()
     local autoEnabledInvis = false
     task.wait(1)
     while task.wait(0.1) do
+        if not movementToggleState then
+            break
+        end
         if _G.AutoInvisDuringSteal == false then
             wasStealingForInvis = false
             autoEnabledInvis = false
@@ -465,7 +516,7 @@ task.spawn(function()
             if isStealing and not wasStealingForInvis then
                 if not _G.invisibleStealEnabled and _G.toggleInvisibleSteal then
                     task.delay(0.25, function()
-                        if LocalPlayer:GetAttribute("Stealing") and not _G.invisibleStealEnabled then
+                        if LocalPlayer:GetAttribute("Stealing") and not _G.invisibleStealEnabled and movementToggleState then
                             pcall(_G.toggleInvisibleSteal)
                             autoEnabledInvis = true
                             if _G.UpdateInvisButton then
@@ -475,7 +526,7 @@ task.spawn(function()
                     end)
                 end
             end
-            if not isStealing and autoEnabledInvis and _G.invisibleStealEnabled and _G.toggleInvisibleSteal then
+            if (not isStealing or not movementToggleState) and autoEnabledInvis and _G.invisibleStealEnabled and _G.toggleInvisibleSteal then
                 pcall(_G.toggleInvisibleSteal)
                 autoEnabledInvis = false
                 if _G.UpdateInvisButton then
@@ -520,7 +571,7 @@ local function StartFloat()
     CreateFloatPlatform()
     if FloatConnection then return end
     FloatConnection = RunService.Heartbeat:Connect(function()
-        if not FloatEnabled then return end
+        if not FloatEnabled or not movementToggleState then return end
         local char = LocalPlayer.Character
         if not char then return end
         local root = char:FindFirstChild("HumanoidRootPart")
@@ -603,465 +654,17 @@ Divider.Parent = Main
 
 local DragBar = Header
 
-local function createOnOffRow(text, y, stateRef, onToggle)
-    local row = Instance.new("Frame")
-    row.Size = UDim2.new(0.88, 0, 0, 26)
-    row.Position = UDim2.new(0.06, 0, 0, y)
-    row.BackgroundTransparency = 1
-    row.Parent = Main
-
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(0.6, 0, 1, 0)
-    label.Position = UDim2.new(0, 0, 0, 0)
-    label.BackgroundTransparency = 1
-    label.Text = text
-    label.Font = Enum.Font.Gotham
-    label.TextSize = 13
-    label.TextColor3 = Color3.fromRGB(230, 230, 230)
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = row
-
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, 80, 0, 22)
-    btn.Position = UDim2.new(1, -80, 0.5, -11)
-    btn.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-    btn.Text = ""
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 10
-    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    btn.AutoButtonColor = false
-    btn.Parent = row
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
-
-    local btnLabel = Instance.new("TextLabel")
-    btnLabel.Size = UDim2.new(1, 0, 1, 0)
-    btnLabel.BackgroundTransparency = 1
-    btnLabel.Font = Enum.Font.GothamBold
-    btnLabel.TextSize = 11
-    btnLabel.Text = stateRef.value and "ON" or "OFF"
-    btnLabel.TextColor3 = stateRef.value and Color3.fromRGB(80, 200, 80) or Color3.fromRGB(200, 80, 80)
-    btnLabel.Parent = btn
-
-    local function update(state, instant)
-        stateRef.value = state
-        local textCol = state and Color3.fromRGB(80, 200, 80) or Color3.fromRGB(200, 80, 80)
-        local bgCol = state and Color3.fromRGB(40, 40, 40) or Color3.fromRGB(25, 25, 25)
-        btnLabel.Text = state and "ON" or "OFF"
-        if instant then
-            btnLabel.TextColor3 = textCol
-            btn.BackgroundColor3 = bgCol
-        else
-            TweenService:Create(btnLabel, TweenInfo.new(0.15), {TextColor3 = textCol}):Play()
-            TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = bgCol}):Play()
-        end
-    end
-
-    update(stateRef.value, true)
-
-    btn.MouseButton1Click:Connect(function()
-        local ns = not stateRef.value
-        update(ns, false)
-        onToggle(ns)
-    end)
-
-    return update
+local function createOnOffRowUI(text, y, stateRef, onToggle)
+    return createOnOffRow(text, y, stateRef, onToggle)
 end
 
-local function createSliderRow(name, y, minVal, maxVal, getVal, setVal)
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(0.88, 0, 0, 18)
-    label.Position = UDim2.new(0.06, 0, 0, y)
-    label.BackgroundTransparency = 1
-    label.Text = name .. ": " .. tostring(getVal())
-    label.Font = Enum.Font.Gotham
-    label.TextSize = 12
-    label.TextColor3 = Color3.fromRGB(230, 230, 230)
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = Main
-
-    local barBack = Instance.new("Frame")
-    barBack.Size = UDim2.new(0.88, 0, 0, 6)
-    barBack.Position = UDim2.new(0.06, 0, 0, y + 18)
-    barBack.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    barBack.BorderSizePixel = 0
-    barBack.Parent = Main
-    Instance.new("UICorner", barBack).CornerRadius = UDim.new(1, 0)
-
-    local fill = Instance.new("Frame")
-    fill.Size = UDim2.new(0, 0, 1, 0)
-    fill.BackgroundColor3 = Color3.fromRGB(220, 220, 220)
-    fill.BorderSizePixel = 0
-    fill.Parent = barBack
-    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
-
-    local knob = Instance.new("Frame")
-    knob.Size = UDim2.new(0, 10, 0, 10)
-    knob.Position = UDim2.new(0, -5, 0.5, -5)
-    knob.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
-    knob.BorderSizePixel = 0
-    knob.Parent = barBack
-    Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
-
-    local dragging = false
-
-    local function setFromAlpha(a, instant)
-        a = math.clamp(a, 0, 1)
-        local v = minVal + (maxVal - minVal) * a
-        v = math.floor(v * 10 + 0.5) / 10
-        setVal(v)
-        label.Text = name .. ": " .. tostring(v)
-        local len = barBack.AbsoluteSize.X
-        if len <= 0 then return end
-        local px = a * len
-        if instant then
-            fill.Size = UDim2.new(0, px, 1, 0)
-            knob.Position = UDim2.new(0, px - 5, 0.5, -5)
-        else
-            TweenService:Create(fill, TweenInfo.new(0.1), {Size = UDim2.new(0, px, 1, 0)}):Play()
-            TweenService:Create(knob, TweenInfo.new(0.1), {Position = UDim2.new(0, px - 5, 0.5, -5)}):Play()
-        end
-    end
-
-    local function updateFromX(px)
-        local origin = barBack.AbsolutePosition.X
-        local len = barBack.AbsoluteSize.X
-        if len <= 0 then return end
-        local alpha = (px - origin) / len
-        setFromAlpha(alpha, false)
-    end
-
-    barBack.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-            isInteractingWithSlider = true
-            updateFromX(i.Position.X)
-        end
-    end)
-
-    knob.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-            isInteractingWithSlider = true
-        end
-    end)
-
-    UserInputService.InputChanged:Connect(function(i)
-        if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
-            updateFromX(i.Position.X)
-        end
-    end)
-
-    UserInputService.InputEnded:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 then
-            if dragging then
-                dragging = false
-                isInteractingWithSlider = false
-            end
-        end
-    end)
-
-    task.defer(function()
-        local v = getVal()
-        local alpha = (v - minVal) / (maxVal - minVal)
-        setFromAlpha(alpha, true)
-    end)
+local function createSliderRowUI(name, y, minVal, maxVal, getVal, setVal)
+    return createSliderRow(name, y, minVal, maxVal, getVal, setVal)
 end
 
-local function createCheckRow(text, y, stateRef, onToggle)
-    local row = Instance.new("Frame")
-    row.Size = UDim2.new(0.88, 0, 0, 22)
-    row.Position = UDim2.new(0.06, 0, 0, y)
-    row.BackgroundTransparency = 1
-    row.Parent = Main
-
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(0.7, 0, 1, 0)
-    label.BackgroundTransparency = 1
-    label.Text = text
-    label.Font = Enum.Font.Gotham
-    label.TextSize = 12
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.TextColor3 = Color3.fromRGB(230, 230, 230)
-    label.Parent = row
-
-    local box = Instance.new("TextButton")
-    box.Size = UDim2.new(0, 22, 0, 22)
-    box.Position = UDim2.new(1, -22, 0, 0)
-    box.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-    box.BorderSizePixel = 0
-    box.Text = ""
-    box.AutoButtonColor = false
-    box.Parent = row
-    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
-
-    local mark = Instance.new("TextLabel")
-    mark.Size = UDim2.new(1, 0, 1, 0)
-    mark.BackgroundTransparency = 1
-    mark.Text = ""
-    mark.Font = Enum.Font.GothamBold
-    mark.TextSize = 16
-    mark.TextColor3 = Color3.fromRGB(230, 230, 230)
-    mark.Parent = box
-
-    local function update(state, instant)
-        stateRef.value = state
-        if state then
-            mark.Text = "✓"
-            if instant then
-                box.BackgroundColor3 = Color3.fromRGB(80, 200, 80)
-            else
-                TweenService:Create(box, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(80, 200, 80)}):Play()
-            end
-        else
-            mark.Text = ""
-            if instant then
-                box.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-            else
-                TweenService:Create(box, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(25, 25, 25)}):Play()
-            end
-        end
-    end
-
-    update(stateRef.value, true)
-
-    box.MouseButton1Click:Connect(function()
-        local ns = not stateRef.value
-        update(ns, false)
-        onToggle(ns)
-    end)
-
-    return update
+local function createCheckRowUI(text, y, stateRef, onToggle)
+    return createCheckRow(text, y, stateRef, onToggle)
 end
-
-local invisToggleState = {value = _G.invisibleStealEnabled}
-local enabledRowUpdate
-do
-    local row = Instance.new("Frame")
-    row.Size = UDim2.new(0.88, 0, 0, 26)
-    row.Position = UDim2.new(0.06, 0, 0, 60)
-    row.BackgroundTransparency = 1
-    row.Parent = Main
-
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(0.6, 0, 1, 0)
-    label.BackgroundTransparency = 1
-    label.Text = "Invis Steal (" .. _G.INVISIBLE_STEAL_KEY .. "):"
-    label.Font = Enum.Font.Gotham
-    label.TextSize = 13
-    label.TextColor3 = Color3.fromRGB(230, 230, 230)
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = row
-
-    local keyBtn = Instance.new("TextButton")
-    keyBtn.Size = UDim2.new(0, 26, 0, 22)
-    keyBtn.Position = UDim2.new(1, -112, 0.5, -11)
-    keyBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-    keyBtn.BorderSizePixel = 0
-    keyBtn.Text = _G.INVISIBLE_STEAL_KEY
-    keyBtn.Font = Enum.Font.GothamBold
-    keyBtn.TextSize = 11
-    keyBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
-    keyBtn.AutoButtonColor = false
-    keyBtn.Parent = row
-    Instance.new("UICorner", keyBtn).CornerRadius = UDim.new(0, 4)
-    _G.InvisKeyButton = keyBtn
-
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, 70, 0, 22)
-    btn.Position = UDim2.new(1, -70, 0.5, -11)
-    btn.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-    btn.Text = ""
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 10
-    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    btn.AutoButtonColor = false
-    btn.Parent = row
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
-
-    local btnLabel = Instance.new("TextLabel")
-    btnLabel.Size = UDim2.new(1, 0, 1, 0)
-    btnLabel.BackgroundTransparency = 1
-    btnLabel.Font = Enum.Font.GothamBold
-    btnLabel.TextSize = 11
-    btnLabel.Text = invisToggleState.value and "ON" or "OFF"
-    btnLabel.TextColor3 = invisToggleState.value and Color3.fromRGB(80, 200, 80) or Color3.fromRGB(200, 80, 80)
-    btnLabel.Parent = btn
-
-    local function upd(state, instant)
-        invisToggleState.value = state
-        local textCol = state and Color3.fromRGB(80, 200, 80) or Color3.fromRGB(200, 80, 80)
-        local bgCol = state and Color3.fromRGB(40, 40, 40) or Color3.fromRGB(25, 25, 25)
-        btnLabel.Text = state and "ON" or "OFF"
-        if instant then
-            btnLabel.TextColor3 = textCol
-            btn.BackgroundColor3 = bgCol
-        else
-            TweenService:Create(btnLabel, TweenInfo.new(0.15), {TextColor3 = textCol}):Play()
-            TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = bgCol}):Play()
-        end
-    end
-
-    upd(_G.invisibleStealEnabled, true)
-
-    btn.MouseButton1Click:Connect(function()
-        if _G.toggleInvisibleSteal then
-            pcall(_G.toggleInvisibleSteal)
-            upd(_G.invisibleStealEnabled, false)
-        end
-    end)
-
-    keyBtn.MouseButton1Click:Connect(function()
-        _G.WaitingForInvisKey = true
-        keyBtn.Text = "..."
-    end)
-
-    enabledRowUpdate = upd
-    _G.UpdateInvisButton = upd
-end
-
-local floatRowState = {value = false}
-do
-    local row = Instance.new("Frame")
-    row.Size = UDim2.new(0.88, 0, 0, 26)
-    row.Position = UDim2.new(0.06, 0, 0, 90)
-    row.BackgroundTransparency = 1
-    row.Parent = Main
-
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(0.6, 0, 1, 0)
-    label.BackgroundTransparency = 1
-    label.Text = "Float (" .. _G.FLOAT_KEY .. "):"
-    label.Font = Enum.Font.Gotham
-    label.TextSize = 13
-    label.TextColor3 = Color3.fromRGB(230, 230, 230)
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = row
-
-    local keyBtn = Instance.new("TextButton")
-    keyBtn.Size = UDim2.new(0, 26, 0, 22)
-    keyBtn.Position = UDim2.new(1, -112, 0.5, -11)
-    keyBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-    keyBtn.BorderSizePixel = 0
-    keyBtn.Text = _G.FLOAT_KEY
-    keyBtn.Font = Enum.Font.GothamBold
-    keyBtn.TextSize = 11
-    keyBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
-    keyBtn.AutoButtonColor = false
-    keyBtn.Parent = row
-    Instance.new("UICorner", keyBtn).CornerRadius = UDim.new(0, 4)
-    _G.FloatKeyButton = keyBtn
-
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, 70, 0, 22)
-    btn.Position = UDim2.new(1, -70, 0.5, -11)
-    btn.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-    btn.Text = "OFF"
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 11
-    btn.TextColor3 = Color3.fromRGB(200, 80, 80)
-    btn.AutoButtonColor = false
-    btn.Parent = row
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
-
-    local function updateFloatButton(state, instant)
-        floatRowState.value = state
-        if state then
-            btn.Text = "ON"
-            btn.TextColor3 = Color3.fromRGB(80, 200, 80)
-            if instant then
-                btn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-            else
-                TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(40, 40, 40)}):Play()
-            end
-        else
-            btn.Text = "OFF"
-            btn.TextColor3 = Color3.fromRGB(200, 80, 80)
-            if instant then
-                btn.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-            else
-                TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(25, 25, 25)}):Play()
-            end
-        end
-    end
-
-    updateFloatButton(FloatEnabled, true)
-
-    keyBtn.MouseButton1Click:Connect(function()
-        _G.WaitingForFloatKey = true
-        keyBtn.Text = "..."
-    end)
-
-    btn.MouseButton1Click:Connect(function()
-        FloatEnabled = not FloatEnabled
-        updateFloatButton(FloatEnabled, false)
-        if FloatEnabled then
-            StartFloat()
-        else
-            StopFloat()
-        end
-    end)
-
-    _G.UpdateFloatButton = updateFloatButton
-end
-
-local function disableAnimations()
-    local char = LocalPlayer.Character
-    if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum then return end
-    local animator = hum:FindFirstChildOfClass("Animator")
-    if animator then
-        for _, t in ipairs(animator:GetPlayingAnimationTracks()) do
-            pcall(function() t:Stop() end)
-        end
-    end
-end
-
-local UnwalkState = {value = false}
-local function unwalkToggleCallback(state)
-    UnwalkState.value = state
-end
-
-local unwalkUpdate = createOnOffRow("Unwalk:", 118, UnwalkState, unwalkToggleCallback)
-
-RunService.Heartbeat:Connect(function()
-    if UnwalkState.value then
-        disableAnimations()
-    end
-end)
-
-local autoInvisState = {value = _G.AutoInvisDuringSteal}
-local autoInvisUpdate = createCheckRow("Activate on Steal (Invis Steal)", 148, autoInvisState,
-    function(state)
-        _G.AutoInvisDuringSteal = state
-        SaveSettings()
-    end
-)
-
-local autoLagbackState = {value = _G.AutoRecoverLagback}
-local autoLagbackUpdate = createCheckRow("Auto Fix Lagback (Invis Steal)", 172, autoLagbackState,
-    function(state)
-        _G.AutoRecoverLagback = state
-        SaveSettings()
-    end
-)
-
-createSliderRow("Rotation", 200, 0, 360, function() return _G.InvisStealAngle end, function(v)
-    _G.InvisStealAngle = v
-    SaveSettings()
-end)
-
-createSliderRow("Depth", 238, 0, 18, function() return _G.SinkSliderValue end, function(v)
-    _G.SinkSliderValue = v
-    SaveSettings()
-end)
-
-local settingsDivider = Instance.new("Frame")
-settingsDivider.Size = UDim2.new(0.88, 0, 0, 1)
-settingsDivider.Position = UDim2.new(0.06, 0, 0, 276)
-settingsDivider.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-settingsDivider.BorderSizePixel = 0
-settingsDivider.Parent = Main
 
 local guiLabel = Instance.new("TextLabel")
 guiLabel.Size = UDim2.new(0.5, 0, 0, 18)
@@ -1243,3 +846,59 @@ UserInputService.InputBegan:Connect(function(input, gpe)
         end
     end
 end)
+
+task.spawn(function()
+    while task.wait(0.2) do
+        if not movementToggleState or not rootGui or not rootGui.Parent then
+            turnOff()
+            StopFloat()
+            ScreenGui:Destroy()
+            script:Destroy()
+            break
+        end
+        local mainWindow = rootGui:FindFirstChild("MainWindow")
+        if not mainWindow then
+            movementToggleState = false
+        else
+            local cf = mainWindow:FindFirstChild("ContentFrame") or mainWindow
+            local uiPage = nil
+            for _, f in ipairs(cf:GetChildren()) do
+                if f:IsA("Frame") and f.Name == "UIPage" then
+                    uiPage = f
+                    break
+                end
+            end
+            if uiPage then
+                local found = false
+                for _, child in ipairs(uiPage:GetChildren()) do
+                    if child:IsA("Frame") then
+                        local label = child:FindFirstChildWhichIsA("TextLabel")
+                        local btn = child:FindFirstChildWhichIsA("TextButton")
+                        if label and btn and label.Text == "Movement Panel" then
+                            local bg = btn.BackgroundColor3
+                            found = true
+                            movementToggleState = not (bg.R == 60/255 and bg.G == 60/255 and bg.B == 60/255)
+                            break
+                        end
+                    end
+                end
+                if not found then
+                    movementToggleState = false
+                end
+            else
+                movementToggleState = false
+            end
+        end
+        if not movementToggleState then
+            turnOff()
+            StopFloat()
+            ScreenGui:Destroy()
+            script:Destroy()
+            break
+        end
+    end
+end)
+
+getgenv().EnzoInvisPanelToggle = function()
+    movementToggleState = false
+end
