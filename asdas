@@ -1,0 +1,1245 @@
+if not game:IsLoaded() then game.Loaded:Wait() end
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local HttpService = game:GetService("HttpService")
+local Workspace = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+if PlayerGui:FindFirstChild("InvisStealPanel") then
+    PlayerGui:FindFirstChild("InvisStealPanel"):Destroy()
+end
+
+local _G = getgenv() or _G
+
+_G.InvisStealAngle = _G.InvisStealAngle or 233
+_G.SinkSliderValue = _G.SinkSliderValue or 5
+_G.AutoRecoverLagback = (_G.AutoRecoverLagback ~= false)
+_G.AutoInvisDuringSteal = (_G.AutoInvisDuringSteal == true)
+_G.INVISIBLE_STEAL_KEY = _G.INVISIBLE_STEAL_KEY or "I"
+_G.FLOAT_KEY = _G.FLOAT_KEY or "B"
+_G.invisibleStealEnabled = _G.invisibleStealEnabled or false
+_G.RecoveryInProgress = _G.RecoveryInProgress or false
+_G.InvisGuiScale = _G.InvisGuiScale or 50
+
+local SAVE_KEY = "InvisSteal_Settings_" .. LocalPlayer.UserId
+
+local function SaveSettings()
+    pcall(function()
+        if writefile then
+            writefile(SAVE_KEY .. ".json", HttpService:JSONEncode({
+                InvisStealAngle = _G.InvisStealAngle,
+                SinkSliderValue = _G.SinkSliderValue,
+                AutoRecoverLagback = _G.AutoRecoverLagback,
+                AutoInvisDuringSteal = _G.AutoInvisDuringSteal,
+                INVISIBLE_STEAL_KEY = _G.INVISIBLE_STEAL_KEY,
+                FLOAT_KEY = _G.FLOAT_KEY,
+                InvisGuiScale = _G.InvisGuiScale
+            }))
+        end
+    end)
+end
+
+local function LoadSettings()
+    pcall(function()
+        if readfile and isfile and isfile(SAVE_KEY .. ".json") then
+            local data = HttpService:JSONDecode(readfile(SAVE_KEY .. ".json"))
+            if data.InvisStealAngle then _G.InvisStealAngle = data.InvisStealAngle end
+            if data.SinkSliderValue then _G.SinkSliderValue = data.SinkSliderValue end
+            if data.AutoRecoverLagback ~= nil then _G.AutoRecoverLagback = data.AutoRecoverLagback end
+            if data.AutoInvisDuringSteal ~= nil then _G.AutoInvisDuringSteal = data.AutoInvisDuringSteal end
+            if data.INVISIBLE_STEAL_KEY then _G.INVISIBLE_STEAL_KEY = data.INVISIBLE_STEAL_KEY end
+            if data.FLOAT_KEY then _G.FLOAT_KEY = data.FLOAT_KEY end
+            if data.InvisGuiScale ~= nil then _G.InvisGuiScale = data.InvisGuiScale end
+        end
+    end)
+end
+
+LoadSettings()
+
+local isInteractingWithSlider = false
+
+local animPlaying = false
+local tracks = {}
+local clone, oldRoot, hip, connection
+local folderConnections = {}
+local lagbackCallCount = 0
+local lagbackWindowStart = 0
+local lastLagbackTime = 0
+
+local function clearAllGhosts()
+    lagbackCallCount = 0
+    lastLagbackTime = 0
+end
+
+local function createServerGhost(position)
+    local now = tick()
+    if now - lastLagbackTime < 0.15 then return end
+    lastLagbackTime = now
+    if now - lagbackWindowStart > 3 then
+        lagbackCallCount = 0
+        lagbackWindowStart = now
+    end
+    lagbackCallCount = lagbackCallCount + 1
+    if lagbackCallCount >= 15 then
+        if _G.toggleInvisibleSteal and _G.invisibleStealEnabled then
+            task.spawn(function()
+                pcall(_G.toggleInvisibleSteal)
+            end)
+        end
+        lagbackCallCount = 0
+        return
+    end
+end
+
+local function removeFolders()
+    local pf = Workspace:FindFirstChild(LocalPlayer.Name)
+    if not pf then return end
+    local dr = pf:FindFirstChild("DoubleRig")
+    if dr then
+        task.spawn(function()
+            pcall(function() dr:Destroy() end)
+        end)
+    end
+    local cs = pf:FindFirstChild("Constraints")
+    if cs then
+        task.spawn(function()
+            pcall(function() cs:Destroy() end)
+        end)
+    end
+    local conn = pf.ChildAdded:Connect(function(child)
+        if child.Name == "DoubleRig" or child.Name == "Constraints" then
+            task.defer(function()
+                task.wait(0.05)
+                pcall(function()
+                    if child and child.Parent then
+                        child:Destroy()
+                    end
+                end)
+            end)
+        end
+    end)
+    table.insert(folderConnections, conn)
+end
+
+local function doClone()
+    local character = LocalPlayer.Character
+    if not character then return false end
+    local humanoid = character:FindFirstChild("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then return false end
+    hip = humanoid.HipHeight
+    oldRoot = character:FindFirstChild("HumanoidRootPart")
+    if not oldRoot or not oldRoot.Parent then return false end
+    for _, c in pairs(oldRoot:GetChildren()) do
+        if c:IsA("Attachment") or c:IsA("Beam") or c:IsA("ParticleEmitter") then
+            pcall(function() c:Destroy() end)
+        end
+    end
+    local success, err = pcall(function()
+        local tmp = Instance.new("Model")
+        tmp.Parent = game
+        character.Parent = tmp
+        clone = oldRoot:Clone()
+        clone.Name = "HumanoidRootPart"
+        clone.Transparency = oldRoot.Transparency
+        clone.CanCollide = false
+        for _, c in pairs(clone:GetChildren()) do
+            if c:IsA("Attachment") or c:IsA("Beam") or c:IsA("ParticleEmitter") then
+                c:Destroy()
+            end
+        end
+        clone.Parent = character
+        oldRoot.Parent = Workspace.CurrentCamera
+        clone.CFrame = oldRoot.CFrame
+        character.PrimaryPart = clone
+        character.Parent = Workspace
+        for _, v in pairs(character:GetDescendants()) do
+            if v:IsA("Weld") or v:IsA("Motor6D") then
+                if v.Part0 == oldRoot then v.Part0 = clone end
+                if v.Part1 == oldRoot then v.Part1 = clone end
+            end
+        end
+        tmp:Destroy()
+    end)
+    if not success then
+        warn("Clone failed:", err)
+        return false
+    end
+    return true
+end
+
+local function revertClone()
+    local character = LocalPlayer.Character
+    if not character then return end
+    local humanoid = character:FindFirstChild("Humanoid")
+    if not humanoid then return end
+    if not oldRoot or not oldRoot:IsDescendantOf(Workspace) then
+        if oldRoot then
+            pcall(function() oldRoot:Destroy() end)
+        end
+        oldRoot = nil
+        clone = nil
+        return
+    end
+    local success = pcall(function()
+        local tmp = Instance.new("Model")
+        tmp.Parent = game
+        character.Parent = tmp
+        oldRoot.Parent = character
+        character.PrimaryPart = oldRoot
+        character.Parent = Workspace
+        oldRoot.CanCollide = true
+        for _, v in pairs(character:GetDescendants()) do
+            if v:IsA("Weld") or v:IsA("Motor6D") then
+                if v.Part0 == clone then v.Part0 = oldRoot end
+                if v.Part1 == clone then v.Part1 = oldRoot end
+            end
+        end
+        if clone then
+            local p = clone.CFrame
+            clone:Destroy()
+            clone = nil
+            oldRoot.CFrame = p
+        end
+        tmp:Destroy()
+    end)
+    if not success then
+        if oldRoot then pcall(function() oldRoot:Destroy() end) end
+        if clone then pcall(function() clone:Destroy() end) end
+    end
+    oldRoot = nil
+    clone = nil
+    if character and humanoid then
+        humanoid.HipHeight = hip or 0
+    end
+    clearAllGhosts()
+end
+
+local function animationTrickery()
+    local character = LocalPlayer.Character
+    if not character then return end
+    local humanoid = character:FindFirstChild("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then return end
+    local anim = Instance.new("Animation")
+    anim.AnimationId = "http://www.roblox.com/asset/?id=18537363391"
+    local animator = humanoid:FindFirstChild("Animator") or Instance.new("Animator", humanoid)
+    local animTrack = animator:LoadAnimation(anim)
+    animTrack.Priority = Enum.AnimationPriority.Action4
+    animTrack:Play(0, 1, 0)
+    anim:Destroy()
+    table.insert(tracks, animTrack)
+    animTrack.Stopped:Connect(function()
+        if animPlaying then
+            task.wait(0.05)
+            animationTrickery()
+        end
+    end)
+    task.spawn(function()
+        animTrack.TimePosition = 0.7
+        task.wait(0.3)
+        if animTrack and animTrack.IsPlaying then
+            animTrack:AdjustSpeed(math.huge)
+        end
+    end)
+end
+
+local function turnOff()
+    clearAllGhosts()
+    if not animPlaying then return end
+    animPlaying = false
+    _G.invisibleStealEnabled = false
+    local character = LocalPlayer.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    for _, t in pairs(tracks) do
+        pcall(function()
+            if t and t.IsPlaying then
+                t:Stop()
+            end
+        end)
+    end
+    tracks = {}
+    if connection then
+        pcall(function() connection:Disconnect() end)
+        connection = nil
+    end
+    for _, c in ipairs(folderConnections) do
+        pcall(function()
+            if c then
+                c:Disconnect()
+            end
+        end)
+    end
+    folderConnections = {}
+    revertClone()
+    if humanoid and humanoid.Health > 0 then
+        task.wait(0.1)
+        pcall(function()
+            humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+        end)
+    end
+end
+
+local function turnOn()
+    if animPlaying then return end
+    local character = LocalPlayer.Character
+    if not character then
+        return
+    end
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid or humanoid.Health <= 0 then
+        return
+    end
+    animPlaying = true
+    _G.invisibleStealEnabled = true
+    tracks = {}
+    removeFolders()
+    local success = doClone()
+    if not success then
+        animPlaying = false
+        _G.invisibleStealEnabled = false
+        return
+    end
+    task.wait(0.05)
+    animationTrickery()
+    task.defer(function()
+        if _G.resetBrainrotBeam then pcall(_G.resetBrainrotBeam) end
+        if _G.resetPlotBeam then pcall(_G.resetPlotBeam) end
+        task.wait(0.1)
+        if _G.updateBrainrotBeam then pcall(_G.updateBrainrotBeam) end
+        if _G.createPlotBeam then pcall(_G.createPlotBeam) end
+    end)
+    local lastSetPosition = nil
+    local skipFrames = 5
+    connection = RunService.PreSimulation:Connect(function()
+        local char = LocalPlayer.Character
+        if not char then return end
+        local hum = char:FindFirstChild("Humanoid")
+        if not hum or hum.Health <= 0 then return end
+        if not oldRoot or not oldRoot.Parent then return end
+        local root = char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")
+        if not root then return end
+        if skipFrames > 0 then
+            skipFrames = skipFrames - 1
+            lastSetPosition = nil
+            return
+        end
+        if lastSetPosition then
+            local currentPos = oldRoot.Position
+            local jumpDist = (currentPos - lastSetPosition).Magnitude
+            if jumpDist > 8 and not _G.RecoveryInProgress then
+                lastSetPosition = nil
+                createServerGhost(currentPos)
+                if _G.AutoRecoverLagback and _G.toggleInvisibleSteal then
+                    _G.RecoveryInProgress = true
+                    task.spawn(function()
+                        pcall(_G.toggleInvisibleSteal)
+                        task.wait(0.5)
+                        pcall(_G.toggleInvisibleSteal)
+                        _G.RecoveryInProgress = false
+                    end)
+                end
+            end
+        end
+        if clone then
+            clone.CanCollide = false
+        end
+        for _, c in pairs(oldRoot:GetChildren()) do
+            if c:IsA("Attachment") or c:IsA("Beam") or c:IsA("ParticleEmitter") then
+                pcall(function() c:Destroy() end)
+            end
+        end
+        local rotAngle = _G.InvisStealAngle or 233
+        local sa = (_G.SinkSliderValue or 5) * 0.5
+        local cf = root.CFrame - Vector3.new(0, sa, 0)
+        oldRoot.CFrame = cf * CFrame.Angles(math.rad(rotAngle), 0, 0)
+        oldRoot.AssemblyLinearVelocity = root.AssemblyLinearVelocity
+        oldRoot.CanCollide = false
+        lastSetPosition = oldRoot.Position
+    end)
+end
+
+_G.toggleInvisibleSteal = function()
+    if animPlaying then
+        turnOff()
+    else
+        turnOn()
+    end
+end
+
+local function onCharacterAdded(newChar)
+    clearAllGhosts()
+    lagbackCallCount = 0
+    pcall(function()
+        if Workspace.CurrentCamera then
+            for _, c in pairs(Workspace.CurrentCamera:GetChildren()) do
+                if c:IsA("BasePart") and c.Name == "HumanoidRootPart" then
+                    c:Destroy()
+                end
+            end
+        end
+    end)
+    if oldRoot then pcall(function() oldRoot:Destroy() end); oldRoot = nil end
+    if clone then pcall(function() clone:Destroy() end); clone = nil end
+    animPlaying = false
+    _G.invisibleStealEnabled = false
+    task.wait(0.2)
+    local camera = Workspace.CurrentCamera
+    if camera and newChar then
+        local h = newChar:FindFirstChildOfClass("Humanoid")
+        if h then
+            camera.CameraSubject = h
+            camera.CameraType = Enum.CameraType.Custom
+        end
+    end
+end
+
+LocalPlayer.CharacterAdded:Connect(onCharacterAdded)
+
+local function setupDeathListener()
+    local ch = LocalPlayer.Character
+    if ch then
+        local h = ch:FindFirstChildOfClass("Humanoid")
+        if h then
+            h.Died:Connect(function()
+                clearAllGhosts()
+                lagbackCallCount = 0
+                if animPlaying then
+                    task.spawn(turnOff)
+                end
+            end)
+        end
+    end
+end
+
+setupDeathListener()
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(0.1)
+    setupDeathListener()
+end)
+
+task.spawn(function()
+    local currentConnection = nil
+    _G.AntiDieConnection = nil
+    _G.AntiDieDisabled = false
+    local function setupAntiDie()
+        if _G.AntiDieDisabled then return end
+        local character = LocalPlayer.Character
+        if not character then return end
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if not humanoid then return end
+        if currentConnection then
+            pcall(function() currentConnection:Disconnect() end)
+        end
+        currentConnection = humanoid:GetPropertyChangedSignal("Health"):Connect(function()
+            if _G.AntiDieDisabled then return end
+            if humanoid.Health <= 0 then
+                humanoid.Health = humanoid.MaxHealth
+            end
+        end)
+        _G.AntiDieConnection = currentConnection
+    end
+    _G.setupAntiDie = setupAntiDie
+    setupAntiDie()
+    LocalPlayer.CharacterAdded:Connect(function()
+        task.wait(0.5)
+        if not _G.AntiDieDisabled then
+            setupAntiDie()
+        end
+    end)
+end)
+
+task.spawn(function()
+    local wasStealingForInvis = false
+    local autoEnabledInvis = false
+    task.wait(1)
+    while task.wait(0.1) do
+        if _G.AutoInvisDuringSteal == false then
+            wasStealingForInvis = false
+            autoEnabledInvis = false
+        else
+            local isStealing = LocalPlayer:GetAttribute("Stealing")
+            if isStealing and not wasStealingForInvis then
+                if not _G.invisibleStealEnabled and _G.toggleInvisibleSteal then
+                    task.delay(0.25, function()
+                        if LocalPlayer:GetAttribute("Stealing") and not _G.invisibleStealEnabled then
+                            pcall(_G.toggleInvisibleSteal)
+                            autoEnabledInvis = true
+                            if _G.UpdateInvisButton then
+                                _G.UpdateInvisButton(true, false)
+                            end
+                        end
+                    end)
+                end
+            end
+            if not isStealing and autoEnabledInvis and _G.invisibleStealEnabled and _G.toggleInvisibleSteal then
+                pcall(_G.toggleInvisibleSteal)
+                autoEnabledInvis = false
+                if _G.UpdateInvisButton then
+                    _G.UpdateInvisButton(false, false)
+                end
+            end
+            wasStealingForInvis = isStealing
+        end
+    end
+end)
+
+local FloatEnabled = false
+local FloatConnection
+local FloatPlatform
+
+local function CreateFloatPlatform()
+    if FloatPlatform and FloatPlatform.Parent then return end
+    local char = LocalPlayer.Character
+    if not char then return end
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return end
+    local part = Instance.new("Part")
+    part.Size = Vector3.new(6, 1, 6)
+    part.Anchored = true
+    part.CanCollide = true
+    part.Transparency = 0.5
+    part.Color = Color3.fromRGB(40, 40, 40)
+    part.CFrame = CFrame.new(root.Position - Vector3.new(0, 3, 0))
+    part.Name = "EnzoFloatPlatform"
+    part.Parent = Workspace
+    FloatPlatform = part
+end
+
+local function DestroyFloatPlatform()
+    if FloatPlatform then
+        pcall(function() FloatPlatform:Destroy() end)
+        FloatPlatform = nil
+    end
+end
+
+local function StartFloat()
+    CreateFloatPlatform()
+    if FloatConnection then return end
+    FloatConnection = RunService.Heartbeat:Connect(function()
+        if not FloatEnabled then return end
+        local char = LocalPlayer.Character
+        if not char then return end
+        local root = char:FindFirstChild("HumanoidRootPart")
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not root or not hum or hum.Health <= 0 then return end
+        if FloatPlatform then
+            FloatPlatform.CFrame = CFrame.new(root.Position - Vector3.new(0, 3, 0))
+        end
+        root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 14, root.AssemblyLinearVelocity.Z)
+    end)
+end
+
+local function StopFloat()
+    if FloatConnection then
+        FloatConnection:Disconnect()
+        FloatConnection = nil
+    end
+    DestroyFloatPlatform()
+end
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "InvisStealPanel"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = PlayerGui
+
+local GlobalUIScale = Instance.new("UIScale")
+GlobalUIScale.Name = "GlobalScale"
+GlobalUIScale.Scale = 0.3 + (1.0 - 0.3) * ((_G.InvisGuiScale - 20) / (100 - 20))
+GlobalUIScale.Parent = ScreenGui
+
+local Main = Instance.new("Frame")
+Main.Name = "Main"
+Main.AnchorPoint = Vector2.new(0, 0)
+Main.Size = UDim2.new(0, 250, 0, 360)
+Main.Position = UDim2.new(0, 20, 0.3, 0)
+Main.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+Main.BorderSizePixel = 0
+Main.Parent = ScreenGui
+Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 12)
+
+local Stroke = Instance.new("UIStroke")
+Stroke.Color = Color3.fromRGB(60, 60, 60)
+Stroke.Thickness = 1
+Stroke.Parent = Main
+
+local Header = Instance.new("Frame")
+Header.Size = UDim2.new(1, 0, 0, 48)
+Header.BackgroundTransparency = 1
+Header.Parent = Main
+
+local HeaderTitle = Instance.new("TextLabel")
+HeaderTitle.Size = UDim2.new(1, 0, 0, 24)
+HeaderTitle.Position = UDim2.new(0, 0, 0, 6)
+HeaderTitle.BackgroundTransparency = 1
+HeaderTitle.Text = "ENZO HUB V1"
+HeaderTitle.Font = Enum.Font.GothamBold
+HeaderTitle.TextSize = 16
+HeaderTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
+HeaderTitle.TextXAlignment = Enum.TextXAlignment.Center
+HeaderTitle.Parent = Header
+
+local HeaderSub = Instance.new("TextLabel")
+HeaderSub.Size = UDim2.new(1, 0, 0, 18)
+HeaderSub.Position = UDim2.new(0, 0, 0, 26)
+HeaderSub.BackgroundTransparency = 1
+HeaderSub.Text = "Movement Panel"
+HeaderSub.Font = Enum.Font.Gotham
+HeaderSub.TextSize = 12
+HeaderSub.TextColor3 = Color3.fromRGB(190, 190, 190)
+HeaderSub.TextXAlignment = Enum.TextXAlignment.Center
+HeaderSub.Parent = Header
+
+local Divider = Instance.new("Frame")
+Divider.Size = UDim2.new(0.88, 0, 0, 1)
+Divider.Position = UDim2.new(0.06, 0, 0, 50)
+Divider.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+Divider.BorderSizePixel = 0
+Divider.Parent = Main
+
+local DragBar = Header
+
+local function createOnOffRow(text, y, stateRef, onToggle)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(0.88, 0, 0, 26)
+    row.Position = UDim2.new(0.06, 0, 0, y)
+    row.BackgroundTransparency = 1
+    row.Parent = Main
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0.6, 0, 1, 0)
+    label.Position = UDim2.new(0, 0, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Text = text
+    label.Font = Enum.Font.Gotham
+    label.TextSize = 13
+    label.TextColor3 = Color3.fromRGB(230, 230, 230)
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = row
+
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 80, 0, 22)
+    btn.Position = UDim2.new(1, -80, 0.5, -11)
+    btn.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+    btn.Text = ""
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 10
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.AutoButtonColor = false
+    btn.Parent = row
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+
+    local btnLabel = Instance.new("TextLabel")
+    btnLabel.Size = UDim2.new(1, 0, 1, 0)
+    btnLabel.BackgroundTransparency = 1
+    btnLabel.Font = Enum.Font.GothamBold
+    btnLabel.TextSize = 11
+    btnLabel.Text = stateRef.value and "ON" or "OFF"
+    btnLabel.TextColor3 = stateRef.value and Color3.fromRGB(80, 200, 80) or Color3.fromRGB(200, 80, 80)
+    btnLabel.Parent = btn
+
+    local function update(state, instant)
+        stateRef.value = state
+        local textCol = state and Color3.fromRGB(80, 200, 80) or Color3.fromRGB(200, 80, 80)
+        local bgCol = state and Color3.fromRGB(40, 40, 40) or Color3.fromRGB(25, 25, 25)
+        btnLabel.Text = state and "ON" or "OFF"
+        if instant then
+            btnLabel.TextColor3 = textCol
+            btn.BackgroundColor3 = bgCol
+        else
+            TweenService:Create(btnLabel, TweenInfo.new(0.15), {TextColor3 = textCol}):Play()
+            TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = bgCol}):Play()
+        end
+    end
+
+    update(stateRef.value, true)
+
+    btn.MouseButton1Click:Connect(function()
+        local ns = not stateRef.value
+        update(ns, false)
+        onToggle(ns)
+    end)
+
+    return update
+end
+
+local function createSliderRow(name, y, minVal, maxVal, getVal, setVal)
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0.88, 0, 0, 18)
+    label.Position = UDim2.new(0.06, 0, 0, y)
+    label.BackgroundTransparency = 1
+    label.Text = name .. ": " .. tostring(getVal())
+    label.Font = Enum.Font.Gotham
+    label.TextSize = 12
+    label.TextColor3 = Color3.fromRGB(230, 230, 230)
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = Main
+
+    local barBack = Instance.new("Frame")
+    barBack.Size = UDim2.new(0.88, 0, 0, 6)
+    barBack.Position = UDim2.new(0.06, 0, 0, y + 18)
+    barBack.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    barBack.BorderSizePixel = 0
+    barBack.Parent = Main
+    Instance.new("UICorner", barBack).CornerRadius = UDim.new(1, 0)
+
+    local fill = Instance.new("Frame")
+    fill.Size = UDim2.new(0, 0, 1, 0)
+    fill.BackgroundColor3 = Color3.fromRGB(220, 220, 220)
+    fill.BorderSizePixel = 0
+    fill.Parent = barBack
+    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+
+    local knob = Instance.new("Frame")
+    knob.Size = UDim2.new(0, 10, 0, 10)
+    knob.Position = UDim2.new(0, -5, 0.5, -5)
+    knob.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
+    knob.BorderSizePixel = 0
+    knob.Parent = barBack
+    Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
+
+    local dragging = false
+
+    local function setFromAlpha(a, instant)
+        a = math.clamp(a, 0, 1)
+        local v = minVal + (maxVal - minVal) * a
+        v = math.floor(v * 10 + 0.5) / 10
+        setVal(v)
+        label.Text = name .. ": " .. tostring(v)
+        local len = barBack.AbsoluteSize.X
+        if len <= 0 then return end
+        local px = a * len
+        if instant then
+            fill.Size = UDim2.new(0, px, 1, 0)
+            knob.Position = UDim2.new(0, px - 5, 0.5, -5)
+        else
+            TweenService:Create(fill, TweenInfo.new(0.1), {Size = UDim2.new(0, px, 1, 0)}):Play()
+            TweenService:Create(knob, TweenInfo.new(0.1), {Position = UDim2.new(0, px - 5, 0.5, -5)}):Play()
+        end
+    end
+
+    local function updateFromX(px)
+        local origin = barBack.AbsolutePosition.X
+        local len = barBack.AbsoluteSize.X
+        if len <= 0 then return end
+        local alpha = (px - origin) / len
+        setFromAlpha(alpha, false)
+    end
+
+    barBack.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            isInteractingWithSlider = true
+            updateFromX(i.Position.X)
+        end
+    end)
+
+    knob.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true
+            isInteractingWithSlider = true
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(i)
+        if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
+            updateFromX(i.Position.X)
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then
+            if dragging then
+                dragging = false
+                isInteractingWithSlider = false
+            end
+        end
+    end)
+
+    task.defer(function()
+        local v = getVal()
+        local alpha = (v - minVal) / (maxVal - minVal)
+        setFromAlpha(alpha, true)
+    end)
+end
+
+local function createCheckRow(text, y, stateRef, onToggle)
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(0.88, 0, 0, 22)
+    row.Position = UDim2.new(0.06, 0, 0, y)
+    row.BackgroundTransparency = 1
+    row.Parent = Main
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0.7, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = text
+    label.Font = Enum.Font.Gotham
+    label.TextSize = 12
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.TextColor3 = Color3.fromRGB(230, 230, 230)
+    label.Parent = row
+
+    local box = Instance.new("TextButton")
+    box.Size = UDim2.new(0, 22, 0, 22)
+    box.Position = UDim2.new(1, -22, 0, 0)
+    box.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+    box.BorderSizePixel = 0
+    box.Text = ""
+    box.AutoButtonColor = false
+    box.Parent = row
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
+
+    local mark = Instance.new("TextLabel")
+    mark.Size = UDim2.new(1, 0, 1, 0)
+    mark.BackgroundTransparency = 1
+    mark.Text = ""
+    mark.Font = Enum.Font.GothamBold
+    mark.TextSize = 16
+    mark.TextColor3 = Color3.fromRGB(230, 230, 230)
+    mark.Parent = box
+
+    local function update(state, instant)
+        stateRef.value = state
+        if state then
+            mark.Text = "✓"
+            if instant then
+                box.BackgroundColor3 = Color3.fromRGB(80, 200, 80)
+            else
+                TweenService:Create(box, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(80, 200, 80)}):Play()
+            end
+        else
+            mark.Text = ""
+            if instant then
+                box.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+            else
+                TweenService:Create(box, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(25, 25, 25)}):Play()
+            end
+        end
+    end
+
+    update(stateRef.value, true)
+
+    box.MouseButton1Click:Connect(function()
+        local ns = not stateRef.value
+        update(ns, false)
+        onToggle(ns)
+    end)
+
+    return update
+end
+
+local invisToggleState = {value = _G.invisibleStealEnabled}
+local enabledRowUpdate
+do
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(0.88, 0, 0, 26)
+    row.Position = UDim2.new(0.06, 0, 0, 60)
+    row.BackgroundTransparency = 1
+    row.Parent = Main
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0.6, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = "Invis Steal (" .. _G.INVISIBLE_STEAL_KEY .. "):"
+    label.Font = Enum.Font.Gotham
+    label.TextSize = 13
+    label.TextColor3 = Color3.fromRGB(230, 230, 230)
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = row
+
+    local keyBtn = Instance.new("TextButton")
+    keyBtn.Size = UDim2.new(0, 26, 0, 22)
+    keyBtn.Position = UDim2.new(1, -112, 0.5, -11)
+    keyBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    keyBtn.BorderSizePixel = 0
+    keyBtn.Text = _G.INVISIBLE_STEAL_KEY
+    keyBtn.Font = Enum.Font.GothamBold
+    keyBtn.TextSize = 11
+    keyBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
+    keyBtn.AutoButtonColor = false
+    keyBtn.Parent = row
+    Instance.new("UICorner", keyBtn).CornerRadius = UDim.new(0, 4)
+    _G.InvisKeyButton = keyBtn
+
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 70, 0, 22)
+    btn.Position = UDim2.new(1, -70, 0.5, -11)
+    btn.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+    btn.Text = ""
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 10
+    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    btn.AutoButtonColor = false
+    btn.Parent = row
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+
+    local btnLabel = Instance.new("TextLabel")
+    btnLabel.Size = UDim2.new(1, 0, 1, 0)
+    btnLabel.BackgroundTransparency = 1
+    btnLabel.Font = Enum.Font.GothamBold
+    btnLabel.TextSize = 11
+    btnLabel.Text = invisToggleState.value and "ON" or "OFF"
+    btnLabel.TextColor3 = invisToggleState.value and Color3.fromRGB(80, 200, 80) or Color3.fromRGB(200, 80, 80)
+    btnLabel.Parent = btn
+
+    local function upd(state, instant)
+        invisToggleState.value = state
+        local textCol = state and Color3.fromRGB(80, 200, 80) or Color3.fromRGB(200, 80, 80)
+        local bgCol = state and Color3.fromRGB(40, 40, 40) or Color3.fromRGB(25, 25, 25)
+        btnLabel.Text = state and "ON" or "OFF"
+        if instant then
+            btnLabel.TextColor3 = textCol
+            btn.BackgroundColor3 = bgCol
+        else
+            TweenService:Create(btnLabel, TweenInfo.new(0.15), {TextColor3 = textCol}):Play()
+            TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = bgCol}):Play()
+        end
+    end
+
+    upd(_G.invisibleStealEnabled, true)
+
+    btn.MouseButton1Click:Connect(function()
+        if _G.toggleInvisibleSteal then
+            pcall(_G.toggleInvisibleSteal)
+            upd(_G.invisibleStealEnabled, false)
+        end
+    end)
+
+    keyBtn.MouseButton1Click:Connect(function()
+        _G.WaitingForInvisKey = true
+        keyBtn.Text = "..."
+    end)
+
+    enabledRowUpdate = upd
+    _G.UpdateInvisButton = upd
+end
+
+local floatRowState = {value = false}
+do
+    local row = Instance.new("Frame")
+    row.Size = UDim2.new(0.88, 0, 0, 26)
+    row.Position = UDim2.new(0.06, 0, 0, 90)
+    row.BackgroundTransparency = 1
+    row.Parent = Main
+
+    local label = Instance.new("TextLabel")
+    label.Size = UDim2.new(0.6, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = "Float (" .. _G.FLOAT_KEY .. "):"
+    label.Font = Enum.Font.Gotham
+    label.TextSize = 13
+    label.TextColor3 = Color3.fromRGB(230, 230, 230)
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Parent = row
+
+    local keyBtn = Instance.new("TextButton")
+    keyBtn.Size = UDim2.new(0, 26, 0, 22)
+    keyBtn.Position = UDim2.new(1, -112, 0.5, -11)
+    keyBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    keyBtn.BorderSizePixel = 0
+    keyBtn.Text = _G.FLOAT_KEY
+    keyBtn.Font = Enum.Font.GothamBold
+    keyBtn.TextSize = 11
+    keyBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
+    keyBtn.AutoButtonColor = false
+    keyBtn.Parent = row
+    Instance.new("UICorner", keyBtn).CornerRadius = UDim.new(0, 4)
+    _G.FloatKeyButton = keyBtn
+
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 70, 0, 22)
+    btn.Position = UDim2.new(1, -70, 0.5, -11)
+    btn.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+    btn.Text = "OFF"
+    btn.Font = Enum.Font.GothamBold
+    btn.TextSize = 11
+    btn.TextColor3 = Color3.fromRGB(200, 80, 80)
+    btn.AutoButtonColor = false
+    btn.Parent = row
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+
+    local function updateFloatButton(state, instant)
+        floatRowState.value = state
+        if state then
+            btn.Text = "ON"
+            btn.TextColor3 = Color3.fromRGB(80, 200, 80)
+            if instant then
+                btn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+            else
+                TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(40, 40, 40)}):Play()
+            end
+        else
+            btn.Text = "OFF"
+            btn.TextColor3 = Color3.fromRGB(200, 80, 80)
+            if instant then
+                btn.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+            else
+                TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(25, 25, 25)}):Play()
+            end
+        end
+    end
+
+    updateFloatButton(FloatEnabled, true)
+
+    keyBtn.MouseButton1Click:Connect(function()
+        _G.WaitingForFloatKey = true
+        keyBtn.Text = "..."
+    end)
+
+    btn.MouseButton1Click:Connect(function()
+        FloatEnabled = not FloatEnabled
+        updateFloatButton(FloatEnabled, false)
+        if FloatEnabled then
+            StartFloat()
+        else
+            StopFloat()
+        end
+    end)
+
+    _G.UpdateFloatButton = updateFloatButton
+end
+
+local function disableAnimations()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    local animator = hum:FindFirstChildOfClass("Animator")
+    if animator then
+        for _, t in ipairs(animator:GetPlayingAnimationTracks()) do
+            pcall(function() t:Stop() end)
+        end
+    end
+end
+
+local UnwalkState = {value = false}
+local function unwalkToggleCallback(state)
+    UnwalkState.value = state
+end
+
+local unwalkUpdate = createOnOffRow("Unwalk:", 118, UnwalkState, unwalkToggleCallback)
+
+RunService.Heartbeat:Connect(function()
+    if UnwalkState.value then
+        disableAnimations()
+    end
+end)
+
+local autoInvisState = {value = _G.AutoInvisDuringSteal}
+local autoInvisUpdate = createCheckRow("Activate on Steal (Invis Steal)", 148, autoInvisState,
+    function(state)
+        _G.AutoInvisDuringSteal = state
+        SaveSettings()
+    end
+)
+
+local autoLagbackState = {value = _G.AutoRecoverLagback}
+local autoLagbackUpdate = createCheckRow("Auto Fix Lagback (Invis Steal)", 172, autoLagbackState,
+    function(state)
+        _G.AutoRecoverLagback = state
+        SaveSettings()
+    end
+)
+
+createSliderRow("Rotation", 200, 0, 360, function() return _G.InvisStealAngle end, function(v)
+    _G.InvisStealAngle = v
+    SaveSettings()
+end)
+
+createSliderRow("Depth", 238, 0, 18, function() return _G.SinkSliderValue end, function(v)
+    _G.SinkSliderValue = v
+    SaveSettings()
+end)
+
+local settingsDivider = Instance.new("Frame")
+settingsDivider.Size = UDim2.new(0.88, 0, 0, 1)
+settingsDivider.Position = UDim2.new(0.06, 0, 0, 276)
+settingsDivider.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+settingsDivider.BorderSizePixel = 0
+settingsDivider.Parent = Main
+
+local guiLabel = Instance.new("TextLabel")
+guiLabel.Size = UDim2.new(0.5, 0, 0, 18)
+guiLabel.Position = UDim2.new(0.06, 0, 0, 284)
+guiLabel.BackgroundTransparency = 1
+guiLabel.Text = "GUI Scale"
+guiLabel.Font = Enum.Font.Gotham
+guiLabel.TextSize = 12
+guiLabel.TextColor3 = Color3.fromRGB(230, 230, 230)
+guiLabel.TextXAlignment = Enum.TextXAlignment.Left
+guiLabel.Parent = Main
+
+local guiBar = Instance.new("Frame")
+guiBar.Size = UDim2.new(0.48, 0, 0, 6)
+guiBar.Position = UDim2.new(0.46, 0, 0, 290)
+guiBar.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+guiBar.BorderSizePixel = 0
+guiBar.Parent = Main
+Instance.new("UICorner", guiBar).CornerRadius = UDim.new(1, 0)
+
+local guiFill = Instance.new("Frame")
+guiFill.Size = UDim2.new(0, 0, 1, 0)
+guiFill.BackgroundColor3 = Color3.fromRGB(220, 220, 220)
+guiFill.BorderSizePixel = 0
+guiFill.Parent = guiBar
+Instance.new("UICorner", guiFill).CornerRadius = UDim.new(1, 0)
+
+local guiKnob = Instance.new("Frame")
+guiKnob.Size = UDim2.new(0, 10, 0, 10)
+guiKnob.Position = UDim2.new(0, -5, 0.5, -5)
+guiKnob.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
+guiKnob.BorderSizePixel = 0
+guiKnob.Parent = guiBar
+Instance.new("UICorner", guiKnob).CornerRadius = UDim.new(1, 0)
+
+local guiDragging = false
+
+local function setGuiAlpha(a, instant)
+    a = math.clamp(a, 0, 1)
+    local value = math.floor(20 + (100 - 20) * a + 0.5)
+    _G.InvisGuiScale = value
+    local len = guiBar.AbsoluteSize.X
+    if len > 0 then
+        local px = a * len
+        if instant then
+            guiFill.Size = UDim2.new(0, px, 1, 0)
+            guiKnob.Position = UDim2.new(0, px - 5, 0.5, -5)
+        else
+            TweenService:Create(guiFill, TweenInfo.new(0.1), {Size = UDim2.new(0, px, 1, 0)}):Play()
+            TweenService:Create(guiKnob, TweenInfo.new(0.1), {Position = UDim2.new(0, px - 5, 0.5, -5)}):Play()
+        end
+    end
+    local scale = 0.3 + (1.0 - 0.3) * ((value - 20) / (100 - 20))
+    if instant then
+        GlobalUIScale.Scale = scale
+    else
+        TweenService:Create(GlobalUIScale, TweenInfo.new(0.15), {Scale = scale}):Play()
+    end
+    SaveSettings()
+end
+
+local function updateGuiX(px)
+    local origin = guiBar.AbsolutePosition.X
+    local len = guiBar.AbsoluteSize.X
+    if len <= 0 then return end
+    local alpha = (px - origin) / len
+    setGuiAlpha(alpha, false)
+end
+
+guiBar.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 then
+        guiDragging = true
+        isInteractingWithSlider = true
+        updateGuiX(i.Position.X)
+    end
+end)
+
+guiKnob.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 then
+        guiDragging = true
+        isInteractingWithSlider = true
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(i)
+    if guiDragging and i.UserInputType == Enum.UserInputType.MouseMovement then
+        updateGuiX(i.Position.X)
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 then
+        if guiDragging then
+            guiDragging = false
+            isInteractingWithSlider = false
+        end
+    end
+end)
+
+task.defer(function()
+    local alpha = (_G.InvisGuiScale - 20) / (100 - 20)
+    setGuiAlpha(alpha, true)
+end)
+
+local draggingPanel = false
+local dragStart
+local startPos
+
+DragBar.InputBegan:Connect(function(i)
+    if isInteractingWithSlider then return end
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        draggingPanel = true
+        dragStart = i.Position
+        startPos = Main.Position
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if draggingPanel and not isInteractingWithSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+        draggingPanel = false
+    end
+end)
+
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+
+    if _G.WaitingForInvisKey and input.UserInputType == Enum.UserInputType.Keyboard then
+        _G.WaitingForInvisKey = false
+        local keyName = input.KeyCode.Name
+        if keyName and keyName ~= "Unknown" then
+            _G.INVISIBLE_STEAL_KEY = keyName
+            if _G.InvisKeyButton then _G.InvisKeyButton.Text = keyName end
+            SaveSettings()
+        else
+            if _G.InvisKeyButton then _G.InvisKeyButton.Text = _G.INVISIBLE_STEAL_KEY end
+        end
+        return
+    end
+
+    if _G.WaitingForFloatKey and input.UserInputType == Enum.UserInputType.Keyboard then
+        _G.WaitingForFloatKey = false
+        local keyName = input.KeyCode.Name
+        if keyName and keyName ~= "Unknown" then
+            _G.FLOAT_KEY = keyName
+            if _G.FloatKeyButton then _G.FloatKeyButton.Text = keyName end
+            SaveSettings()
+        else
+            if _G.FloatKeyButton then _G.FloatKeyButton.Text = _G.FLOAT_KEY end
+        end
+        return
+    end
+
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        local invisKeyCode = Enum.KeyCode[_G.INVISIBLE_STEAL_KEY]
+        if invisKeyCode and input.KeyCode == invisKeyCode then
+            pcall(_G.toggleInvisibleSteal)
+            enabledRowUpdate(_G.invisibleStealEnabled, false)
+            return
+        end
+
+        local floatKeyCode = Enum.KeyCode[_G.FLOAT_KEY]
+        if floatKeyCode and input.KeyCode == floatKeyCode then
+            FloatEnabled = not FloatEnabled
+            if _G.UpdateFloatButton then
+                _G.UpdateFloatButton(FloatEnabled, false)
+            end
+            if FloatEnabled then
+                StartFloat()
+            else
+                StopFloat()
+            end
+        end
+    end
+end)
