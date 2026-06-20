@@ -10,7 +10,7 @@ local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
--- falls altes Panel existiert -> zerstören
+-- altes Panel entfernen
 do
     local old = PlayerGui:FindFirstChild("InvisStealPanel")
     if old then old:Destroy() end
@@ -27,6 +27,7 @@ _G.FLOAT_KEY             = _G.FLOAT_KEY or "B"
 _G.invisibleStealEnabled = false
 _G.RecoveryInProgress    = false
 _G.InvisGuiScale         = _G.InvisGuiScale or 50
+_G.EnzoMovementKeybindsDisabled = _G.EnzoMovementKeybindsDisabled or false
 
 local SAVE_KEY = "InvisSteal_Settings_" .. LocalPlayer.UserId
 
@@ -77,8 +78,8 @@ local FloatEnabled = false
 local FloatConnection
 local FloatPlatform
 
-local ScreenGui -- später gesetzt
-local enabledRowUpdate -- später
+local ScreenGui
+local enabledRowUpdate
 
 local function clearAllGhosts()
     lagbackCallCount = 0
@@ -374,6 +375,7 @@ local function turnOn()
 end
 
 _G.toggleInvisibleSteal = function()
+    if _G.EnzoMovementKeybindsDisabled then return end
     if animPlaying then
         turnOff()
     else
@@ -432,7 +434,7 @@ LocalPlayer.CharacterAdded:Connect(function()
     setupDeathListener()
 end)
 
--- AntiDie
+-- AntiDie (unverändert)
 task.spawn(function()
     local currentConnection = nil
     _G.AntiDieConnection = nil
@@ -464,7 +466,7 @@ task.spawn(function()
     end)
 end)
 
--- Auto Invis During Steal
+-- Auto Invis During Steal (unverändert)
 task.spawn(function()
     local wasStealingForInvis = false
     local autoEnabledInvis = false
@@ -528,6 +530,7 @@ local function DestroyFloatPlatform()
 end
 
 local function StartFloat()
+    if _G.EnzoMovementKeybindsDisabled then return end
     CreateFloatPlatform()
     if FloatConnection then return end
     FloatConnection = RunService.Heartbeat:Connect(function()
@@ -917,6 +920,7 @@ do
     upd(_G.invisibleStealEnabled, true)
 
     btn.MouseButton1Click:Connect(function()
+        if _G.EnzoMovementKeybindsDisabled then return end
         if _G.toggleInvisibleSteal then
             pcall(_G.toggleInvisibleSteal)
             upd(_G.invisibleStealEnabled, false)
@@ -1006,6 +1010,7 @@ do
     end)
 
     btn.MouseButton1Click:Connect(function()
+        if _G.EnzoMovementKeybindsDisabled then return end
         FloatEnabled = not FloatEnabled
         updateFloatButton(FloatEnabled, false)
         if FloatEnabled then
@@ -1221,6 +1226,11 @@ end)
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
 
+    if _G.EnzoMovementKeybindsDisabled then
+        -- nach Hub-OFF sollen Keys nichts mehr machen
+        return
+    end
+
     if _G.WaitingForInvisKey and input.UserInputType == Enum.UserInputType.Keyboard then
         _G.WaitingForInvisKey = false
         local keyName = input.KeyCode.Name
@@ -1300,5 +1310,8 @@ do
         if ScreenGui and ScreenGui.Parent then
             ScreenGui:Destroy()
         end
+
+        -- ab jetzt Keybinds global blocken
+        _G.EnzoMovementKeybindsDisabled = true
     end
 end
