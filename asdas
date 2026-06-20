@@ -10,24 +10,22 @@ local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
--- altes Panel entfernen
-do
-    local old = PlayerGui:FindFirstChild("InvisStealPanel")
-    if old then old:Destroy() end
-end
+local oldGui = PlayerGui:FindFirstChild("InvisStealPanel")
+if oldGui then oldGui:Destroy() end
 
-local _G = getgenv() or _G
+local Global = getgenv and getgenv() or _G
+if Global.EnzoInvisPanelToggle then pcall(Global.EnzoInvisPanelToggle) end
+local _G = Global
 
-_G.InvisStealAngle       = _G.InvisStealAngle or 233
-_G.SinkSliderValue       = _G.SinkSliderValue or 5
-_G.AutoRecoverLagback    = (_G.AutoRecoverLagback ~= false)
-_G.AutoInvisDuringSteal  = (_G.AutoInvisDuringSteal == true)
-_G.INVISIBLE_STEAL_KEY   = _G.INVISIBLE_STEAL_KEY or "I"
-_G.FLOAT_KEY             = _G.FLOAT_KEY or "B"
-_G.invisibleStealEnabled = false
-_G.RecoveryInProgress    = false
-_G.InvisGuiScale         = _G.InvisGuiScale or 50
-_G.EnzoMovementKeybindsDisabled = _G.EnzoMovementKeybindsDisabled or false
+_G.InvisStealAngle = _G.InvisStealAngle or 233
+_G.SinkSliderValue = _G.SinkSliderValue or 5
+_G.AutoRecoverLagback = (_G.AutoRecoverLagback ~= false)
+_G.AutoInvisDuringSteal = (_G.AutoInvisDuringSteal == true)
+_G.INVISIBLE_STEAL_KEY = _G.INVISIBLE_STEAL_KEY or "I"
+_G.FLOAT_KEY = _G.FLOAT_KEY or "B"
+_G.invisibleStealEnabled = _G.invisibleStealEnabled or false
+_G.RecoveryInProgress = _G.RecoveryInProgress or false
+_G.InvisGuiScale = _G.InvisGuiScale or 50
 
 local SAVE_KEY = "InvisSteal_Settings_" .. LocalPlayer.UserId
 
@@ -35,13 +33,13 @@ local function SaveSettings()
     pcall(function()
         if writefile then
             writefile(SAVE_KEY .. ".json", HttpService:JSONEncode({
-                InvisStealAngle      = _G.InvisStealAngle,
-                SinkSliderValue      = _G.SinkSliderValue,
-                AutoRecoverLagback   = _G.AutoRecoverLagback,
+                InvisStealAngle = _G.InvisStealAngle,
+                SinkSliderValue = _G.SinkSliderValue,
+                AutoRecoverLagback = _G.AutoRecoverLagback,
                 AutoInvisDuringSteal = _G.AutoInvisDuringSteal,
-                INVISIBLE_STEAL_KEY  = _G.INVISIBLE_STEAL_KEY,
-                FLOAT_KEY            = _G.FLOAT_KEY,
-                InvisGuiScale        = _G.InvisGuiScale
+                INVISIBLE_STEAL_KEY = _G.INVISIBLE_STEAL_KEY,
+                FLOAT_KEY = _G.FLOAT_KEY,
+                InvisGuiScale = _G.InvisGuiScale
             }))
         end
     end)
@@ -51,18 +49,25 @@ local function LoadSettings()
     pcall(function()
         if readfile and isfile and isfile(SAVE_KEY .. ".json") then
             local data = HttpService:JSONDecode(readfile(SAVE_KEY .. ".json"))
-            if data.InvisStealAngle        then _G.InvisStealAngle        = data.InvisStealAngle end
-            if data.SinkSliderValue        then _G.SinkSliderValue        = data.SinkSliderValue end
-            if data.AutoRecoverLagback ~= nil   then _G.AutoRecoverLagback   = data.AutoRecoverLagback end
+            if data.InvisStealAngle then _G.InvisStealAngle = data.InvisStealAngle end
+            if data.SinkSliderValue then _G.SinkSliderValue = data.SinkSliderValue end
+            if data.AutoRecoverLagback ~= nil then _G.AutoRecoverLagback = data.AutoRecoverLagback end
             if data.AutoInvisDuringSteal ~= nil then _G.AutoInvisDuringSteal = data.AutoInvisDuringSteal end
-            if data.INVISIBLE_STEAL_KEY    then _G.INVISIBLE_STEAL_KEY    = data.INVISIBLE_STEAL_KEY end
-            if data.FLOAT_KEY              then _G.FLOAT_KEY              = data.FLOAT_KEY end
-            if data.InvisGuiScale ~= nil   then _G.InvisGuiScale          = data.InvisGuiScale end
+            if data.INVISIBLE_STEAL_KEY then _G.INVISIBLE_STEAL_KEY = data.INVISIBLE_STEAL_KEY end
+            if data.FLOAT_KEY then _G.FLOAT_KEY = data.FLOAT_KEY end
+            if data.InvisGuiScale ~= nil then _G.InvisGuiScale = data.InvisGuiScale end
         end
     end)
 end
 
 LoadSettings()
+
+local PanelConnections = {}
+local function AddConn(conn)
+    if conn then
+        table.insert(PanelConnections, conn)
+    end
+end
 
 local isInteractingWithSlider = false
 
@@ -80,6 +85,7 @@ local FloatPlatform
 
 local ScreenGui
 local enabledRowUpdate
+local UnwalkState = {value = false}
 
 local function clearAllGhosts()
     lagbackCallCount = 0
@@ -134,6 +140,7 @@ local function removeFolders()
         end
     end)
     table.insert(folderConnections, conn)
+    AddConn(conn)
 end
 
 local function doClone()
@@ -242,12 +249,12 @@ local function animationTrickery()
     animTrack:Play(0, 1, 0)
     anim:Destroy()
     table.insert(tracks, animTrack)
-    animTrack.Stopped:Connect(function()
+    AddConn(animTrack.Stopped:Connect(function()
         if animPlaying then
             task.wait(0.05)
             animationTrickery()
         end
-    end)
+    end))
     task.spawn(function()
         animTrack.TimePosition = 0.7
         task.wait(0.3)
@@ -258,16 +265,14 @@ local function animationTrickery()
 end
 
 local function hardDisconnectAll()
-    if connection then
-        pcall(function() connection:Disconnect() end)
-        connection = nil
-    end
-    for _, c in ipairs(folderConnections) do
+    for _, c in ipairs(PanelConnections) do
         pcall(function()
             if c then c:Disconnect() end
         end)
     end
+    PanelConnections = {}
     folderConnections = {}
+    connection = nil
 end
 
 local function turnOff()
@@ -285,7 +290,10 @@ local function turnOff()
         end)
     end
     tracks = {}
-    hardDisconnectAll()
+    if connection then
+        pcall(function() connection:Disconnect() end)
+        connection = nil
+    end
     revertClone()
     if humanoid and humanoid.Health > 0 then
         task.wait(0.1)
@@ -372,10 +380,10 @@ local function turnOn()
         oldRoot.CanCollide = false
         lastSetPosition = oldRoot.Position
     end)
+    AddConn(connection)
 end
 
 _G.toggleInvisibleSteal = function()
-    if _G.EnzoMovementKeybindsDisabled then return end
     if animPlaying then
         turnOff()
     else
@@ -410,31 +418,30 @@ local function onCharacterAdded(newChar)
     end
 end
 
-LocalPlayer.CharacterAdded:Connect(onCharacterAdded)
+AddConn(LocalPlayer.CharacterAdded:Connect(onCharacterAdded))
 
 local function setupDeathListener()
     local ch = LocalPlayer.Character
     if ch then
         local h = ch:FindFirstChildOfClass("Humanoid")
         if h then
-            h.Died:Connect(function()
+            AddConn(h.Died:Connect(function()
                 clearAllGhosts()
                 lagbackCallCount = 0
                 if animPlaying then
                     task.spawn(turnOff)
                 end
-            end)
+            end))
         end
     end
 end
 
 setupDeathListener()
-LocalPlayer.CharacterAdded:Connect(function()
+AddConn(LocalPlayer.CharacterAdded:Connect(function()
     task.wait(0.1)
     setupDeathListener()
-end)
+end))
 
--- AntiDie (unverändert)
 task.spawn(function()
     local currentConnection = nil
     _G.AntiDieConnection = nil
@@ -458,20 +465,22 @@ task.spawn(function()
     end
     _G.setupAntiDie = setupAntiDie
     setupAntiDie()
-    LocalPlayer.CharacterAdded:Connect(function()
+    AddConn(LocalPlayer.CharacterAdded:Connect(function()
         task.wait(0.5)
         if not _G.AntiDieDisabled then
             setupAntiDie()
         end
-    end)
+    end))
 end)
 
--- Auto Invis During Steal (unverändert)
 task.spawn(function()
     local wasStealingForInvis = false
     local autoEnabledInvis = false
     task.wait(1)
     while task.wait(0.1) do
+        if not ScreenGui or not ScreenGui.Parent then
+            break
+        end
         if _G.AutoInvisDuringSteal == false then
             wasStealingForInvis = false
             autoEnabledInvis = false
@@ -480,6 +489,7 @@ task.spawn(function()
             if isStealing and not wasStealingForInvis then
                 if not _G.invisibleStealEnabled and _G.toggleInvisibleSteal then
                     task.delay(0.25, function()
+                        if not ScreenGui or not ScreenGui.Parent then return end
                         if LocalPlayer:GetAttribute("Stealing") and not _G.invisibleStealEnabled then
                             pcall(_G.toggleInvisibleSteal)
                             autoEnabledInvis = true
@@ -501,8 +511,6 @@ task.spawn(function()
         end
     end
 end)
-
--- Float
 
 local function CreateFloatPlatform()
     if FloatPlatform and FloatPlatform.Parent then return end
@@ -530,7 +538,6 @@ local function DestroyFloatPlatform()
 end
 
 local function StartFloat()
-    if _G.EnzoMovementKeybindsDisabled then return end
     CreateFloatPlatform()
     if FloatConnection then return end
     FloatConnection = RunService.Heartbeat:Connect(function()
@@ -545,6 +552,7 @@ local function StartFloat()
         end
         root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 14, root.AssemblyLinearVelocity.Z)
     end)
+    AddConn(FloatConnection)
 end
 
 local function StopFloat()
@@ -554,8 +562,6 @@ local function StopFloat()
     end
     DestroyFloatPlatform()
 end
-
--- GUI
 
 ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "InvisStealPanel"
@@ -674,11 +680,11 @@ local function createOnOffRow(text, y, stateRef, onToggle)
 
     update(stateRef.value, true)
 
-    btn.MouseButton1Click:Connect(function()
+    AddConn(btn.MouseButton1Click:Connect(function()
         local ns = not stateRef.value
         update(ns, false)
         onToggle(ns)
-    end)
+    end))
 
     return update
 end
@@ -746,35 +752,35 @@ local function createSliderRow(name, y, minVal, maxVal, getVal, setVal)
         setFromAlpha(alpha, false)
     end
 
-    barBack.InputBegan:Connect(function(i)
+    AddConn(barBack.InputBegan:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1 then
             dragging = true
             isInteractingWithSlider = true
             updateFromX(i.Position.X)
         end
-    end)
+    end))
 
-    knob.InputBegan:Connect(function(i)
+    AddConn(knob.InputBegan:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1 then
             dragging = true
             isInteractingWithSlider = true
         end
-    end)
+    end))
 
-    UserInputService.InputChanged:Connect(function(i)
+    AddConn(UserInputService.InputChanged:Connect(function(i)
         if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
             updateFromX(i.Position.X)
         end
-    end)
+    end))
 
-    UserInputService.InputEnded:Connect(function(i)
+    AddConn(UserInputService.InputEnded:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1 then
             if dragging then
                 dragging = false
                 isInteractingWithSlider = false
             end
         end
-    end)
+    end))
 
     task.defer(function()
         local v = getVal()
@@ -840,16 +846,15 @@ local function createCheckRow(text, y, stateRef, onToggle)
 
     update(stateRef.value, true)
 
-    box.MouseButton1Click:Connect(function()
+    AddConn(box.MouseButton1Click:Connect(function()
         local ns = not stateRef.value
         update(ns, false)
         onToggle(ns)
-    end)
+    end))
 
     return update
 end
 
--- Invis Steal + Keybind Row
 local invisToggleState = {value = _G.invisibleStealEnabled}
 do
     local row = Instance.new("Frame")
@@ -919,24 +924,22 @@ do
 
     upd(_G.invisibleStealEnabled, true)
 
-    btn.MouseButton1Click:Connect(function()
-        if _G.EnzoMovementKeybindsDisabled then return end
+    AddConn(btn.MouseButton1Click:Connect(function()
         if _G.toggleInvisibleSteal then
             pcall(_G.toggleInvisibleSteal)
             upd(_G.invisibleStealEnabled, false)
         end
-    end)
+    end))
 
-    keyBtn.MouseButton1Click:Connect(function()
+    AddConn(keyBtn.MouseButton1Click:Connect(function()
         _G.WaitingForInvisKey = true
         keyBtn.Text = "..."
-    end)
+    end))
 
     enabledRowUpdate = upd
     _G.UpdateInvisButton = upd
 end
 
--- Float + Keybind Row
 local floatRowState = {value = false}
 do
     local row = Instance.new("Frame")
@@ -1004,13 +1007,12 @@ do
 
     updateFloatButton(FloatEnabled, true)
 
-    keyBtn.MouseButton1Click:Connect(function()
+    AddConn(keyBtn.MouseButton1Click:Connect(function()
         _G.WaitingForFloatKey = true
         keyBtn.Text = "..."
-    end)
+    end))
 
-    btn.MouseButton1Click:Connect(function()
-        if _G.EnzoMovementKeybindsDisabled then return end
+    AddConn(btn.MouseButton1Click:Connect(function()
         FloatEnabled = not FloatEnabled
         updateFloatButton(FloatEnabled, false)
         if FloatEnabled then
@@ -1018,12 +1020,11 @@ do
         else
             StopFloat()
         end
-    end)
+    end))
 
     _G.UpdateFloatButton = updateFloatButton
 end
 
--- Unwalk
 local function disableAnimations()
     local char = LocalPlayer.Character
     if not char then return end
@@ -1037,20 +1038,18 @@ local function disableAnimations()
     end
 end
 
-local UnwalkState = {value = false}
 local function unwalkToggleCallback(state)
     UnwalkState.value = state
 end
 
 local unwalkUpdate = createOnOffRow("Unwalk:", 118, UnwalkState, unwalkToggleCallback)
 
-RunService.Heartbeat:Connect(function()
+AddConn(RunService.Heartbeat:Connect(function()
     if UnwalkState.value then
         disableAnimations()
     end
-end)
+end))
 
--- Checks
 local autoInvisState = {value = _G.AutoInvisDuringSteal}
 local autoInvisUpdate = createCheckRow("Activate on Steal (Invis Steal)", 148, autoInvisState,
     function(state)
@@ -1067,7 +1066,6 @@ local autoLagbackUpdate = createCheckRow("Auto Fix Lagback (Invis Steal)", 172, 
     end
 )
 
--- Rotation + Depth Slider
 createSliderRow("Rotation", 200, 0, 360,
     function() return _G.InvisStealAngle end,
     function(v)
@@ -1084,7 +1082,6 @@ createSliderRow("Depth", 238, 0, 18,
     end
 )
 
--- GUI Scale
 local settingsDivider = Instance.new("Frame")
 settingsDivider.Size = UDim2.new(0.88, 0, 0, 1)
 settingsDivider.Position = UDim2.new(0.06, 0, 0, 276)
@@ -1160,76 +1157,69 @@ local function updateGuiX(px)
     setGuiAlpha(alpha, false)
 end
 
-guiBar.InputBegan:Connect(function(i)
+AddConn(guiBar.InputBegan:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.MouseButton1 then
         guiDragging = true
         isInteractingWithSlider = true
         updateGuiX(i.Position.X)
     end
-end)
+end))
 
-guiKnob.InputBegan:Connect(function(i)
+AddConn(guiKnob.InputBegan:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.MouseButton1 then
         guiDragging = true
         isInteractingWithSlider = true
     end
-end)
+end))
 
-UserInputService.InputChanged:Connect(function(i)
+AddConn(UserInputService.InputChanged:Connect(function(i)
     if guiDragging and i.UserInputType == Enum.UserInputType.MouseMovement then
         updateGuiX(i.Position.X)
     end
-end)
+end))
 
-UserInputService.InputEnded:Connect(function(i)
+AddConn(UserInputService.InputEnded:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.MouseButton1 then
         if guiDragging then
             guiDragging = false
             isInteractingWithSlider = false
         end
     end
-end)
+end))
 
 task.defer(function()
     local alpha = (_G.InvisGuiScale - 20) / (100 - 20)
     setGuiAlpha(alpha, true)
 end)
 
--- Panel Drag
 local draggingPanel = false
 local dragStart
 local startPos
 
-DragBar.InputBegan:Connect(function(i)
+AddConn(DragBar.InputBegan:Connect(function(i)
     if isInteractingWithSlider then return end
     if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
         draggingPanel = true
         dragStart = i.Position
         startPos = Main.Position
     end
-end)
+end))
 
-UserInputService.InputChanged:Connect(function(input)
+AddConn(UserInputService.InputChanged:Connect(function(input)
     if draggingPanel and not isInteractingWithSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         local delta = input.Position - dragStart
         Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
     end
-end)
+end))
 
-UserInputService.InputEnded:Connect(function(i)
+AddConn(UserInputService.InputEnded:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
         draggingPanel = false
     end
-end)
+end))
 
--- Keybind Input
-UserInputService.InputBegan:Connect(function(input, gpe)
+AddConn(UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
-
-    if _G.EnzoMovementKeybindsDisabled then
-        -- nach Hub-OFF sollen Keys nichts mehr machen
-        return
-    end
 
     if _G.WaitingForInvisKey and input.UserInputType == Enum.UserInputType.Keyboard then
         _G.WaitingForInvisKey = false
@@ -1280,38 +1270,26 @@ UserInputService.InputBegan:Connect(function(input, gpe)
             end
         end
     end
-end)
-
-----------------------------------------------------------------
--- GLOBALER TOGGLER FÜR DEN HUB (EnzoHubUI)
-----------------------------------------------------------------
+end))
 
 do
     local g = getgenv()
     g.EnzoInvisPanelToggle = function()
-        -- Invis Steal aus
+        hardDisconnectAll()
         if _G.invisibleStealEnabled and _G.toggleInvisibleSteal then
             pcall(_G.toggleInvisibleSteal)
+        elseif animPlaying then
+            pcall(turnOff)
         end
-
-        -- Float aus
-        if FloatEnabled then
-            FloatEnabled = false
-            if _G.UpdateFloatButton then
-                _G.UpdateFloatButton(false, false)
-            end
-            StopFloat()
+        FloatEnabled = false
+        pcall(StopFloat)
+        if _G.UpdateFloatButton then
+            pcall(_G.UpdateFloatButton, false, true)
         end
-
-        -- Unwalk aus
         UnwalkState.value = false
-
-        -- GUI killen
-        if ScreenGui and ScreenGui.Parent then
-            ScreenGui:Destroy()
+        local gui = PlayerGui:FindFirstChild("InvisStealPanel")
+        if gui then
+            pcall(function() gui:Destroy() end)
         end
-
-        -- ab jetzt Keybinds global blocken
-        _G.EnzoMovementKeybindsDisabled = true
     end
 end
