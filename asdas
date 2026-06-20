@@ -10,8 +10,10 @@ local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
-if PlayerGui:FindFirstChild("InvisStealPanel") then
-    PlayerGui:FindFirstChild("InvisStealPanel"):Destroy()
+-- falls altes Panel existiert -> zerstören
+do
+    local old = PlayerGui:FindFirstChild("InvisStealPanel")
+    if old then old:Destroy() end
 end
 
 local _G = getgenv() or _G
@@ -22,10 +24,9 @@ _G.AutoRecoverLagback    = (_G.AutoRecoverLagback ~= false)
 _G.AutoInvisDuringSteal  = (_G.AutoInvisDuringSteal == true)
 _G.INVISIBLE_STEAL_KEY   = _G.INVISIBLE_STEAL_KEY or "I"
 _G.FLOAT_KEY             = _G.FLOAT_KEY or "B"
-_G.invisibleStealEnabled = _G.invisibleStealEnabled or false
-_G.RecoveryInProgress    = _G.RecoveryInProgress or false
+_G.invisibleStealEnabled = false
+_G.RecoveryInProgress    = false
 _G.InvisGuiScale         = _G.InvisGuiScale or 50
-_G.EnzoMovementDisabled  = _G.EnzoMovementDisabled or false -- verhindert Re‑Aktivierung nach Kill
 
 local SAVE_KEY = "InvisSteal_Settings_" .. LocalPlayer.UserId
 
@@ -71,6 +72,13 @@ local folderConnections = {}
 local lagbackCallCount = 0
 local lagbackWindowStart = 0
 local lastLagbackTime = 0
+
+local FloatEnabled = false
+local FloatConnection
+local FloatPlatform
+
+local ScreenGui -- später gesetzt
+local enabledRowUpdate -- später
 
 local function clearAllGhosts()
     lagbackCallCount = 0
@@ -263,12 +271,9 @@ end
 
 local function turnOff()
     clearAllGhosts()
-    if not animPlaying then
-        _G.invisibleStealEnabled = false
-        return
-    end
-    animPlaying = false
     _G.invisibleStealEnabled = false
+    if not animPlaying then return end
+    animPlaying = false
     local character = LocalPlayer.Character
     local humanoid = character and character:FindFirstChildOfClass("Humanoid")
     for _, t in pairs(tracks) do
@@ -290,7 +295,6 @@ local function turnOff()
 end
 
 local function turnOn()
-    if _G.EnzoMovementDisabled then return end
     if animPlaying then return end
     local character = LocalPlayer.Character
     if not character then
@@ -322,7 +326,6 @@ local function turnOn()
     local lastSetPosition = nil
     local skipFrames = 5
     connection = RunService.PreSimulation:Connect(function()
-        if _G.EnzoMovementDisabled then return end
         local char = LocalPlayer.Character
         if not char then return end
         local hum = char:FindFirstChild("Humanoid")
@@ -371,7 +374,6 @@ local function turnOn()
 end
 
 _G.toggleInvisibleSteal = function()
-    if _G.EnzoMovementDisabled then return end
     if animPlaying then
         turnOff()
     else
@@ -430,7 +432,7 @@ LocalPlayer.CharacterAdded:Connect(function()
     setupDeathListener()
 end)
 
--- AntiDie bleibt wie gehabt
+-- AntiDie
 task.spawn(function()
     local currentConnection = nil
     _G.AntiDieConnection = nil
@@ -468,11 +470,6 @@ task.spawn(function()
     local autoEnabledInvis = false
     task.wait(1)
     while task.wait(0.1) do
-        if _G.EnzoMovementDisabled then
-            wasStealingForInvis = false
-            autoEnabledInvis = false
-            continue
-        end
         if _G.AutoInvisDuringSteal == false then
             wasStealingForInvis = false
             autoEnabledInvis = false
@@ -481,7 +478,6 @@ task.spawn(function()
             if isStealing and not wasStealingForInvis then
                 if not _G.invisibleStealEnabled and _G.toggleInvisibleSteal then
                     task.delay(0.25, function()
-                        if _G.EnzoMovementDisabled then return end
                         if LocalPlayer:GetAttribute("Stealing") and not _G.invisibleStealEnabled then
                             pcall(_G.toggleInvisibleSteal)
                             autoEnabledInvis = true
@@ -505,10 +501,6 @@ task.spawn(function()
 end)
 
 -- Float
-
-local FloatEnabled = false
-local FloatConnection
-local FloatPlatform
 
 local function CreateFloatPlatform()
     if FloatPlatform and FloatPlatform.Parent then return end
@@ -536,11 +528,9 @@ local function DestroyFloatPlatform()
 end
 
 local function StartFloat()
-    if _G.EnzoMovementDisabled then return end
     CreateFloatPlatform()
     if FloatConnection then return end
     FloatConnection = RunService.Heartbeat:Connect(function()
-        if _G.EnzoMovementDisabled then return end
         if not FloatEnabled then return end
         local char = LocalPlayer.Character
         if not char then return end
@@ -564,7 +554,7 @@ end
 
 -- GUI
 
-local ScreenGui = Instance.new("ScreenGui")
+ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "InvisStealPanel"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
@@ -858,7 +848,6 @@ end
 
 -- Invis Steal + Keybind Row
 local invisToggleState = {value = _G.invisibleStealEnabled}
-local enabledRowUpdate
 do
     local row = Instance.new("Frame")
     row.Size = UDim2.new(0.88, 0, 0, 26)
@@ -928,7 +917,6 @@ do
     upd(_G.invisibleStealEnabled, true)
 
     btn.MouseButton1Click:Connect(function()
-        if _G.EnzoMovementDisabled then return end
         if _G.toggleInvisibleSteal then
             pcall(_G.toggleInvisibleSteal)
             upd(_G.invisibleStealEnabled, false)
@@ -1018,7 +1006,6 @@ do
     end)
 
     btn.MouseButton1Click:Connect(function()
-        if _G.EnzoMovementDisabled then return end
         FloatEnabled = not FloatEnabled
         updateFloatButton(FloatEnabled, false)
         if FloatEnabled then
@@ -1053,7 +1040,6 @@ end
 local unwalkUpdate = createOnOffRow("Unwalk:", 118, UnwalkState, unwalkToggleCallback)
 
 RunService.Heartbeat:Connect(function()
-    if _G.EnzoMovementDisabled then return end
     if UnwalkState.value then
         disableAnimations()
     end
@@ -1234,7 +1220,6 @@ end)
 -- Keybind Input
 UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
-    if _G.EnzoMovementDisabled then return end
 
     if _G.WaitingForInvisKey and input.UserInputType == Enum.UserInputType.Keyboard then
         _G.WaitingForInvisKey = false
@@ -1288,66 +1273,11 @@ UserInputService.InputBegan:Connect(function(input, gpe)
 end)
 
 ----------------------------------------------------------------
--- HUB-BUTTON WATCHER: deaktiviert Features + GUI, wenn OFF
-----------------------------------------------------------------
-
-local function HubMovementEnabled()
-    local hub = PlayerGui:FindFirstChild("EnzoHubUI")
-    if not hub then return true end
-    local main = hub:FindFirstChild("MainWindow")
-    if not main then return true end
-    local content = main:FindFirstChild("ContentFrame") or main
-    local uiPage
-    for _, f in ipairs(content:GetChildren()) do
-        if f:IsA("Frame") and f.Name == "UIPage" then
-            uiPage = f
-            break
-        end
-    end
-    if not uiPage then return true end
-    for _, child in ipairs(uiPage:GetChildren()) do
-        if child:IsA("Frame") then
-            local lbl = child:FindFirstChildWhichIsA("TextLabel")
-            local btn = child:FindFirstChildWhichIsA("TextButton")
-            if lbl and btn and lbl.Text == "Movement Panel" then
-                -- Button grau => OFF
-                return btn.BackgroundColor3 ~= Color3.fromRGB(60, 60, 60)
-            end
-        end
-    end
-    return true
-end
-
-task.spawn(function()
-    while task.wait(0.2) do
-        if not HubMovementEnabled() then
-            -- gleiches Verhalten wie EnzoInvisPanelToggle
-            if _G.invisibleStealEnabled and _G.toggleInvisibleSteal then
-                pcall(_G.toggleInvisibleSteal)
-            end
-            if FloatEnabled then
-                FloatEnabled = false
-                if _G.UpdateFloatButton then
-                    _G.UpdateFloatButton(false, false)
-                end
-                StopFloat()
-            end
-            if ScreenGui and ScreenGui.Parent then
-                ScreenGui:Destroy()
-            end
-            _G.EnzoMovementDisabled = true
-            break
-        end
-    end
-end)
-
-----------------------------------------------------------------
 -- GLOBALER TOGGLER FÜR DEN HUB (EnzoHubUI)
 ----------------------------------------------------------------
 
 do
     local g = getgenv()
-
     g.EnzoInvisPanelToggle = function()
         -- Invis Steal aus
         if _G.invisibleStealEnabled and _G.toggleInvisibleSteal then
@@ -1370,8 +1300,5 @@ do
         if ScreenGui and ScreenGui.Parent then
             ScreenGui:Destroy()
         end
-
-        -- Movement komplett disablen (keine Keybinds mehr)
-        _G.EnzoMovementDisabled = true
     end
 end
