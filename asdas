@@ -1316,3 +1316,32 @@ task.spawn(function()
         end
     end
 end)
+
+----------------------------------------------------------------
+-- GLOBALER TOGGLER FÜR DEN HUB (EnzoHubUI)
+----------------------------------------------------------------
+
+do
+    local g = getgenv()
+
+    g.EnzoInvisPanelToggle = function()
+        -- Invis Steal aus
+        if _G.invisibleStealEnabled and _G.toggleInvisibleSteal then
+            pcall(_G.toggleInvisibleSteal)
+        end
+
+        -- Float aus
+        if FloatEnabled then
+            FloatEnabled = false
+            if _G.UpdateFloatButton then
+                _G.UpdateFloatButton(false, false)
+            end
+            StopFloat()
+        end
+
+        -- Panel schließen
+        if ScreenGui and ScreenGui.Parent then
+            ScreenGui:Destroy()
+        end
+    end
+end
