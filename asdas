@@ -26,12 +26,14 @@ _G.FLOAT_KEY = _G.FLOAT_KEY or "B"
 _G.invisibleStealEnabled = _G.invisibleStealEnabled or false
 _G.RecoveryInProgress = _G.RecoveryInProgress or false
 _G.InvisGuiScale = _G.InvisGuiScale or 50
+_G.InvisMainPos = _G.InvisMainPos or nil
 
 local SAVE_KEY = "InvisSteal_Settings_" .. LocalPlayer.UserId
 
 local function SaveSettings()
     pcall(function()
         if writefile then
+            local mainPos = _G.InvisMainPos or (PlayerGui:FindFirstChild("InvisStealPanel") and PlayerGui.InvisStealPanel:FindFirstChild("Main") and PlayerGui.InvisStealPanel.Main.Position) or nil
             writefile(SAVE_KEY .. ".json", HttpService:JSONEncode({
                 InvisStealAngle = _G.InvisStealAngle,
                 SinkSliderValue = _G.SinkSliderValue,
@@ -39,7 +41,13 @@ local function SaveSettings()
                 AutoInvisDuringSteal = _G.AutoInvisDuringSteal,
                 INVISIBLE_STEAL_KEY = _G.INVISIBLE_STEAL_KEY,
                 FLOAT_KEY = _G.FLOAT_KEY,
-                InvisGuiScale = _G.InvisGuiScale
+                InvisGuiScale = _G.InvisGuiScale,
+                InvisMainPos = mainPos and {
+                    sx = mainPos.X.Scale,
+                    ox = mainPos.X.Offset,
+                    sy = mainPos.Y.Scale,
+                    oy = mainPos.Y.Offset
+                } or nil
             }))
         end
     end)
@@ -56,6 +64,9 @@ local function LoadSettings()
             if data.INVISIBLE_STEAL_KEY then _G.INVISIBLE_STEAL_KEY = data.INVISIBLE_STEAL_KEY end
             if data.FLOAT_KEY then _G.FLOAT_KEY = data.FLOAT_KEY end
             if data.InvisGuiScale ~= nil then _G.InvisGuiScale = data.InvisGuiScale end
+            if data.InvisMainPos and data.InvisMainPos.sx and data.InvisMainPos.ox and data.InvisMainPos.sy and data.InvisMainPos.oy then
+                _G.InvisMainPos = UDim2.new(data.InvisMainPos.sx, data.InvisMainPos.ox, data.InvisMainPos.sy, data.InvisMainPos.oy)
+            end
         end
     end)
 end
@@ -164,6 +175,8 @@ local function doClone()
         clone.Name = "HumanoidRootPart"
         clone.Transparency = oldRoot.Transparency
         clone.CanCollide = false
+        clone.Massless = true
+        clone.CustomPhysicalProperties = PhysicalProperties.new(0, 0, 0, 0, 0)
         for _, c in pairs(clone:GetChildren()) do
             if c:IsA("Attachment") or c:IsA("Beam") or c:IsA("ParticleEmitter") then
                 c:Destroy()
@@ -306,13 +319,9 @@ end
 local function turnOn()
     if animPlaying then return end
     local character = LocalPlayer.Character
-    if not character then
-        return
-    end
+    if not character then return end
     local humanoid = character:FindFirstChildOfClass("Humanoid")
-    if not humanoid or humanoid.Health <= 0 then
-        return
-    end
+    if not humanoid or humanoid.Health <= 0 then return end
     animPlaying = true
     _G.invisibleStealEnabled = true
     tracks = {}
@@ -366,6 +375,7 @@ local function turnOn()
         end
         if clone then
             clone.CanCollide = false
+            clone.Massless = true
         end
         for _, c in pairs(oldRoot:GetChildren()) do
             if c:IsA("Attachment") or c:IsA("Beam") or c:IsA("ParticleEmitter") then
@@ -377,7 +387,8 @@ local function turnOn()
         local cf = root.CFrame - Vector3.new(0, sa, 0)
         oldRoot.CFrame = cf * CFrame.Angles(math.rad(rotAngle), 0, 0)
         oldRoot.AssemblyLinearVelocity = root.AssemblyLinearVelocity
-        oldRoot.CanCollide = false
+        oldRoot.AssemblyAngularVelocity = root.AssemblyAngularVelocity
+        oldRoot.CanCollide = true
         lastSetPosition = oldRoot.Position
     end)
     AddConn(connection)
@@ -578,7 +589,7 @@ local Main = Instance.new("Frame")
 Main.Name = "Main"
 Main.AnchorPoint = Vector2.new(0, 0)
 Main.Size = UDim2.new(0, 250, 0, 360)
-Main.Position = UDim2.new(0, 20, 0.3, 0)
+Main.Position = _G.InvisMainPos or UDim2.new(0, 20, 0.3, 0)
 Main.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
 Main.BorderSizePixel = 0
 Main.Parent = ScreenGui
@@ -1209,6 +1220,8 @@ AddConn(UserInputService.InputChanged:Connect(function(input)
     if draggingPanel and not isInteractingWithSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         local delta = input.Position - dragStart
         Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        _G.InvisMainPos = Main.Position
+        SaveSettings()
     end
 end))
 
