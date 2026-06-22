@@ -27,13 +27,15 @@ _G.invisibleStealEnabled = _G.invisibleStealEnabled or false
 _G.RecoveryInProgress = _G.RecoveryInProgress or false
 _G.InvisGuiScale = _G.InvisGuiScale or 50
 _G.InvisMainPos = _G.InvisMainPos or nil
+_G.InvisOpenPos = _G.InvisOpenPos or nil
 
 local SAVE_KEY = "InvisSteal_Settings_" .. LocalPlayer.UserId
 
 local function SaveSettings()
     pcall(function()
         if writefile then
-            local mainPos = _G.InvisMainPos or (PlayerGui:FindFirstChild("InvisStealPanel") and PlayerGui.InvisStealPanel:FindFirstChild("Main") and PlayerGui.InvisStealPanel.Main.Position) or nil
+            local mainPos = _G.InvisMainPos
+            local openPos = _G.InvisOpenPos
             writefile(SAVE_KEY .. ".json", HttpService:JSONEncode({
                 InvisStealAngle = _G.InvisStealAngle,
                 SinkSliderValue = _G.SinkSliderValue,
@@ -47,6 +49,12 @@ local function SaveSettings()
                     ox = mainPos.X.Offset,
                     sy = mainPos.Y.Scale,
                     oy = mainPos.Y.Offset
+                } or nil,
+                InvisOpenPos = openPos and {
+                    sx = openPos.X.Scale,
+                    ox = openPos.X.Offset,
+                    sy = openPos.Y.Scale,
+                    oy = openPos.Y.Offset
                 } or nil
             }))
         end
@@ -64,8 +72,11 @@ local function LoadSettings()
             if data.INVISIBLE_STEAL_KEY then _G.INVISIBLE_STEAL_KEY = data.INVISIBLE_STEAL_KEY end
             if data.FLOAT_KEY then _G.FLOAT_KEY = data.FLOAT_KEY end
             if data.InvisGuiScale ~= nil then _G.InvisGuiScale = data.InvisGuiScale end
-            if data.InvisMainPos and data.InvisMainPos.sx and data.InvisMainPos.ox and data.InvisMainPos.sy and data.InvisMainPos.oy then
+            if data.InvisMainPos and data.InvisMainPos.sx then
                 _G.InvisMainPos = UDim2.new(data.InvisMainPos.sx, data.InvisMainPos.ox, data.InvisMainPos.sy, data.InvisMainPos.oy)
+            end
+            if data.InvisOpenPos and data.InvisOpenPos.sx then
+                _G.InvisOpenPos = UDim2.new(data.InvisOpenPos.sx, data.InvisOpenPos.ox, data.InvisOpenPos.sy, data.InvisOpenPos.oy)
             end
         end
     end)
@@ -223,6 +234,7 @@ local function revertClone()
         character.PrimaryPart = oldRoot
         character.Parent = Workspace
         oldRoot.CanCollide = true
+        oldRoot.Massless = false
         for _, v in pairs(character:GetDescendants()) do
             if v:IsA("Weld") or v:IsA("Motor6D") then
                 if v.Part0 == clone then v.Part0 = oldRoot end
@@ -387,8 +399,9 @@ local function turnOn()
         local cf = root.CFrame - Vector3.new(0, sa, 0)
         oldRoot.CFrame = cf * CFrame.Angles(math.rad(rotAngle), 0, 0)
         oldRoot.AssemblyLinearVelocity = root.AssemblyLinearVelocity
-        oldRoot.AssemblyAngularVelocity = root.AssemblyAngularVelocity
+        oldRoot.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
         oldRoot.CanCollide = true
+        oldRoot.Massless = false
         lastSetPosition = oldRoot.Position
     end)
     AddConn(connection)
