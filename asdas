@@ -458,7 +458,7 @@ task.spawn(function()
             setupAntiDie()
         end
     end))
-end))
+end)
 task.spawn(function()
     local wasStealingForInvis = false
     local autoEnabledInvis = false
@@ -496,7 +496,7 @@ task.spawn(function()
             wasStealingForInvis = isStealing
         end
     end
-end))
+end)
 local function CreateFloatPlatform()
     if FloatPlatform and FloatPlatform.Parent then return end
     local char = LocalPlayer.Character
