@@ -88,6 +88,25 @@ local FloatPlatform
 local ScreenGui
 local enabledRowUpdate
 local UnwalkState = {value = false}
+local SavedTransparencies = {}
+local function hideCharacterVisual()
+    local character = LocalPlayer.Character
+    if not character then return end
+    for _, part in ipairs(character:GetDescendants()) do
+        if part:IsA("BasePart") or part:IsA("Decal") then
+            SavedTransparencies[part] = part.Transparency
+            part.Transparency = 1
+        end
+    end
+end
+local function showCharacterVisual()
+    for part, oldT in pairs(SavedTransparencies) do
+        if part and part.Parent then
+            part.Transparency = oldT
+        end
+    end
+    SavedTransparencies = {}
+end
 local function clearAllGhosts()
     lagbackCallCount = 0
     lastLagbackTime = 0
@@ -289,6 +308,7 @@ local function turnOff()
         connection = nil
     end
     revertClone()
+    showCharacterVisual()
     if humanoid and humanoid.Health > 0 then
         task.wait(0.1)
         pcall(function()
@@ -316,6 +336,7 @@ local function turnOn()
         _G.invisibleStealEnabled = false
         return
     end
+    hideCharacterVisual()
     task.wait(0.05)
     animationTrickery()
     task.defer(function()
@@ -385,6 +406,7 @@ end
 local function onCharacterAdded(newChar)
     clearAllGhosts()
     lagbackCallCount = 0
+    showCharacterVisual()
     pcall(function()
         if Workspace.CurrentCamera then
             for _, c in pairs(Workspace.CurrentCamera:GetChildren()) do
@@ -1184,6 +1206,7 @@ do
     local g = getgenv()
     g.EnzoInvisPanelToggle = function()
         hardDisconnectAll()
+        showCharacterVisual()
         if _G.invisibleStealEnabled and _G.toggleInvisibleSteal then
             pcall(_G.toggleInvisibleSteal)
         elseif animPlaying then
