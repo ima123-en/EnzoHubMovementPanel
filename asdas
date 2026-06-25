@@ -7,11 +7,14 @@ local HttpService = game:GetService("HttpService")
 local Workspace = game:GetService("Workspace")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
 local oldGui = PlayerGui:FindFirstChild("InvisStealPanel")
 if oldGui then oldGui:Destroy() end
+
 local Global = getgenv and getgenv() or _G
 if Global.EnzoInvisPanelToggle then pcall(Global.EnzoInvisPanelToggle) end
 local _G = Global
+
 _G.InvisStealAngle = _G.InvisStealAngle or 233
 _G.SinkSliderValue = _G.SinkSliderValue or 5
 _G.AutoRecoverLagback = (_G.AutoRecoverLagback ~= false)
@@ -25,7 +28,9 @@ _G.InvisGuiPosXScale  = _G.InvisGuiPosXScale  or 0
 _G.InvisGuiPosXOffset = _G.InvisGuiPosXOffset or 20
 _G.InvisGuiPosYScale  = _G.InvisGuiPosYScale  or 0.3
 _G.InvisGuiPosYOffset = _G.InvisGuiPosYOffset or 0
+
 local SAVE_KEY = "InvisSteal_Settings_" .. LocalPlayer.UserId
+
 local function SaveSettings()
     pcall(function()
         if writefile then
@@ -47,6 +52,7 @@ local function SaveSettings()
         end
     end)
 end
+
 local function LoadSettings()
     pcall(function()
         if readfile and isfile and isfile(SAVE_KEY .. ".json") then
@@ -67,13 +73,16 @@ local function LoadSettings()
         end
     end)
 end
+
 LoadSettings()
+
 local PanelConnections = {}
 local function AddConn(conn)
     if conn then
         table.insert(PanelConnections, conn)
     end
 end
+
 local isInteractingWithSlider = false
 local animPlaying = false
 local tracks = {}
@@ -89,6 +98,7 @@ local ScreenGui
 local enabledRowUpdate
 local UnwalkState = {value = false}
 local SavedTransparencies = {}
+
 local function hideCharacterVisual()
     local character = LocalPlayer.Character
     if not character then return end
@@ -99,6 +109,7 @@ local function hideCharacterVisual()
         end
     end
 end
+
 local function showCharacterVisual()
     for part, oldT in pairs(SavedTransparencies) do
         if part and part.Parent then
@@ -107,10 +118,12 @@ local function showCharacterVisual()
     end
     SavedTransparencies = {}
 end
+
 local function clearAllGhosts()
     lagbackCallCount = 0
     lastLagbackTime = 0
 end
+
 local function createServerGhost(position)
     local now = tick()
     if now - lastLagbackTime < 0.15 then return end
@@ -130,6 +143,7 @@ local function createServerGhost(position)
         return
     end
 end
+
 local function removeFolders()
     local pf = Workspace:FindFirstChild(LocalPlayer.Name)
     if not pf then return end
@@ -160,6 +174,7 @@ local function removeFolders()
     table.insert(folderConnections, conn)
     AddConn(conn)
 end
+
 local function doClone()
     local character = LocalPlayer.Character
     if not character then return false end
@@ -205,6 +220,7 @@ local function doClone()
     end
     return true
 end
+
 local function revertClone()
     local character = LocalPlayer.Character
     if not character then return end
@@ -251,6 +267,7 @@ local function revertClone()
     end
     clearAllGhosts()
 end
+
 local function animationTrickery()
     local character = LocalPlayer.Character
     if not character then return end
@@ -278,6 +295,7 @@ local function animationTrickery()
         end
     end)
 end
+
 local function hardDisconnectAll()
     for _, c in ipairs(PanelConnections) do
         pcall(function()
@@ -288,6 +306,7 @@ local function hardDisconnectAll()
     folderConnections = {}
     connection = nil
 end
+
 local function turnOff()
     clearAllGhosts()
     _G.invisibleStealEnabled = false
@@ -316,16 +335,13 @@ local function turnOff()
         end)
     end
 end
+
 local function turnOn()
     if animPlaying then return end
     local character = LocalPlayer.Character
-    if not character then
-        return
-    end
+    if not character then return end
     local humanoid = character:FindFirstChildOfClass("Humanoid")
-    if not humanoid or humanoid.Health <= 0 then
-        return
-    end
+    if not humanoid or humanoid.Health <= 0 then return end
     animPlaying = true
     _G.invisibleStealEnabled = true
     tracks = {}
@@ -396,6 +412,7 @@ local function turnOn()
     end)
     AddConn(connection)
 end
+
 _G.toggleInvisibleSteal = function()
     if animPlaying then
         turnOff()
@@ -403,6 +420,7 @@ _G.toggleInvisibleSteal = function()
         turnOn()
     end
 end
+
 local function onCharacterAdded(newChar)
     clearAllGhosts()
     lagbackCallCount = 0
@@ -430,7 +448,9 @@ local function onCharacterAdded(newChar)
         end
     end
 end
+
 AddConn(LocalPlayer.CharacterAdded:Connect(onCharacterAdded))
+
 local function setupDeathListener()
     local ch = LocalPlayer.Character
     if ch then
@@ -446,11 +466,13 @@ local function setupDeathListener()
         end
     end
 end
+
 setupDeathListener()
 AddConn(LocalPlayer.CharacterAdded:Connect(function()
     task.wait(0.1)
     setupDeathListener()
 end))
+
 task.spawn(function()
     local currentConnection = nil
     _G.AntiDieConnection = nil
@@ -481,6 +503,7 @@ task.spawn(function()
         end
     end))
 end)
+
 task.spawn(function()
     local wasStealingForInvis = false
     local autoEnabledInvis = false
@@ -496,7 +519,7 @@ task.spawn(function()
             local isStealing = LocalPlayer:GetAttribute("Stealing")
             if isStealing and not wasStealingForInvis then
                 if not _G.invisibleStealEnabled and _G.toggleInvisibleSteal then
-                    task.delay(0.25, function()
+                    task.delay(0.5, function()
                         if not ScreenGui or not ScreenGui.Parent then return end
                         if LocalPlayer:GetAttribute("Stealing") and not _G.invisibleStealEnabled then
                             pcall(_G.toggleInvisibleSteal)
@@ -519,6 +542,7 @@ task.spawn(function()
         end
     end
 end)
+
 local function CreateFloatPlatform()
     if FloatPlatform and FloatPlatform.Parent then return end
     local char = LocalPlayer.Character
@@ -536,12 +560,14 @@ local function CreateFloatPlatform()
     part.Parent = Workspace
     FloatPlatform = part
 end
+
 local function DestroyFloatPlatform()
     if FloatPlatform then
         pcall(function() FloatPlatform:Destroy() end)
         FloatPlatform = nil
     end
 end
+
 local function StartFloat()
     CreateFloatPlatform()
     if FloatConnection then return end
@@ -559,6 +585,7 @@ local function StartFloat()
     end)
     AddConn(FloatConnection)
 end
+
 local function StopFloat()
     if FloatConnection then
         FloatConnection:Disconnect()
@@ -566,15 +593,18 @@ local function StopFloat()
     end
     DestroyFloatPlatform()
 end
+
 ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "InvisStealPanel"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = PlayerGui
+
 local GlobalUIScale = Instance.new("UIScale")
 GlobalUIScale.Name = "GlobalScale"
 GlobalUIScale.Scale = 0.3 + (1.0 - 0.3) * ((_G.InvisGuiScale - 20) / (100 - 20))
 GlobalUIScale.Parent = ScreenGui
+
 local Main = Instance.new("Frame")
 Main.Name = "Main"
 Main.AnchorPoint = Vector2.new(0, 0)
@@ -589,14 +619,17 @@ Main.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
 Main.BorderSizePixel = 0
 Main.Parent = ScreenGui
 Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 12)
+
 local Stroke = Instance.new("UIStroke")
 Stroke.Color = Color3.fromRGB(60, 60, 60)
 Stroke.Thickness = 1
 Stroke.Parent = Main
+
 local Header = Instance.new("Frame")
 Header.Size = UDim2.new(1, 0, 0, 48)
 Header.BackgroundTransparency = 1
 Header.Parent = Main
+
 local HeaderTitle = Instance.new("TextLabel")
 HeaderTitle.Size = UDim2.new(1, 0, 0, 24)
 HeaderTitle.Position = UDim2.new(0, 0, 0, 6)
@@ -607,6 +640,7 @@ HeaderTitle.TextSize = 16
 HeaderTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
 HeaderTitle.TextXAlignment = Enum.TextXAlignment.Center
 HeaderTitle.Parent = Header
+
 local HeaderSub = Instance.new("TextLabel")
 HeaderSub.Size = UDim2.new(1, 0, 0, 18)
 HeaderSub.Position = UDim2.new(0, 0, 0, 26)
@@ -617,13 +651,16 @@ HeaderSub.TextSize = 12
 HeaderSub.TextColor3 = Color3.fromRGB(190, 190, 190)
 HeaderSub.TextXAlignment = Enum.TextXAlignment.Center
 HeaderSub.Parent = Header
+
 local Divider = Instance.new("Frame")
 Divider.Size = UDim2.new(0.88, 0, 0, 1)
 Divider.Position = UDim2.new(0.06, 0, 0, 50)
 Divider.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 Divider.BorderSizePixel = 0
 Divider.Parent = Main
+
 local DragBar = Header
+
 local function createOnOffRow(text, y, stateRef, onToggle)
     local row = Instance.new("Frame")
     row.Size = UDim2.new(0.88, 0, 0, 26)
@@ -632,7 +669,6 @@ local function createOnOffRow(text, y, stateRef, onToggle)
     row.Parent = Main
     local label = Instance.new("TextLabel")
     label.Size = UDim2.new(0.6, 0, 1, 0)
-    label.Position = UDim2.new(0, 0, 0, 0)
     label.BackgroundTransparency = 1
     label.Text = text
     label.Font = Enum.Font.Gotham
@@ -680,6 +716,7 @@ local function createOnOffRow(text, y, stateRef, onToggle)
     end))
     return update
 end
+
 local function createSliderRow(name, y, minVal, maxVal, getVal, setVal)
     local label = Instance.new("TextLabel")
     label.Size = UDim2.new(0.88, 0, 0, 18)
@@ -768,6 +805,7 @@ local function createSliderRow(name, y, minVal, maxVal, getVal, setVal)
         setFromAlpha(alpha, true)
     end)
 end
+
 local function createCheckRow(text, y, stateRef, onToggle)
     local row = Instance.new("Frame")
     row.Size = UDim2.new(0.88, 0, 0, 22)
@@ -826,6 +864,7 @@ local function createCheckRow(text, y, stateRef, onToggle)
     end))
     return update
 end
+
 local invisToggleState = {value = _G.invisibleStealEnabled}
 do
     local row = Instance.new("Frame")
@@ -901,6 +940,7 @@ do
     enabledRowUpdate = upd
     _G.UpdateInvisButton = upd
 end
+
 local floatRowState = {value = false}
 do
     local row = Instance.new("Frame")
@@ -977,6 +1017,7 @@ do
     end))
     _G.UpdateFloatButton = updateFloatButton
 end
+
 local function disableAnimations()
     local char = LocalPlayer.Character
     if not char then return end
@@ -989,15 +1030,18 @@ local function disableAnimations()
         end
     end
 end
+
 local function unwalkToggleCallback(state)
     UnwalkState.value = state
 end
+
 local unwalkUpdate = createOnOffRow("Unwalk:", 118, UnwalkState, unwalkToggleCallback)
 AddConn(RunService.Heartbeat:Connect(function()
     if UnwalkState.value then
         disableAnimations()
     end
 end))
+
 local autoInvisState = {value = _G.AutoInvisDuringSteal}
 local autoInvisUpdate = createCheckRow("Activate on Steal (Invis Steal)", 148, autoInvisState,
     function(state)
@@ -1005,6 +1049,7 @@ local autoInvisUpdate = createCheckRow("Activate on Steal (Invis Steal)", 148, a
         SaveSettings()
     end
 )
+
 local autoLagbackState = {value = _G.AutoRecoverLagback}
 local autoLagbackUpdate = createCheckRow("Auto Fix Lagback (Invis Steal)", 172, autoLagbackState,
     function(state)
@@ -1012,6 +1057,7 @@ local autoLagbackUpdate = createCheckRow("Auto Fix Lagback (Invis Steal)", 172, 
         SaveSettings()
     end
 )
+
 createSliderRow("Rotation", 200, 0, 360,
     function() return _G.InvisStealAngle end,
     function(v)
@@ -1019,6 +1065,7 @@ createSliderRow("Rotation", 200, 0, 360,
         SaveSettings()
     end
 )
+
 createSliderRow("Depth", 238, 0, 18,
     function() return _G.SinkSliderValue end,
     function(v)
@@ -1026,12 +1073,14 @@ createSliderRow("Depth", 238, 0, 18,
         SaveSettings()
     end
 )
+
 local settingsDivider = Instance.new("Frame")
 settingsDivider.Size = UDim2.new(0.88, 0, 0, 1)
 settingsDivider.Position = UDim2.new(0.06, 0, 0, 276)
 settingsDivider.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 settingsDivider.BorderSizePixel = 0
 settingsDivider.Parent = Main
+
 local guiLabel = Instance.new("TextLabel")
 guiLabel.Size = UDim2.new(0.5, 0, 0, 18)
 guiLabel.Position = UDim2.new(0.06, 0, 0, 284)
@@ -1042,6 +1091,7 @@ guiLabel.TextSize = 12
 guiLabel.TextColor3 = Color3.fromRGB(230, 230, 230)
 guiLabel.TextXAlignment = Enum.TextXAlignment.Left
 guiLabel.Parent = Main
+
 local guiBar = Instance.new("Frame")
 guiBar.Size = UDim2.new(0.48, 0, 0, 6)
 guiBar.Position = UDim2.new(0.46, 0, 0, 290)
@@ -1049,12 +1099,14 @@ guiBar.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 guiBar.BorderSizePixel = 0
 guiBar.Parent = Main
 Instance.new("UICorner", guiBar).CornerRadius = UDim.new(1, 0)
+
 local guiFill = Instance.new("Frame")
 guiFill.Size = UDim2.new(0, 0, 1, 0)
 guiFill.BackgroundColor3 = Color3.fromRGB(220, 220, 220)
 guiFill.BorderSizePixel = 0
 guiFill.Parent = guiBar
 Instance.new("UICorner", guiFill).CornerRadius = UDim.new(1, 0)
+
 local guiKnob = Instance.new("Frame")
 guiKnob.Size = UDim2.new(0, 10, 0, 10)
 guiKnob.Position = UDim2.new(0, -5, 0.5, -5)
@@ -1062,6 +1114,7 @@ guiKnob.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
 guiKnob.BorderSizePixel = 0
 guiKnob.Parent = guiBar
 Instance.new("UICorner", guiKnob).CornerRadius = UDim.new(1, 0)
+
 local guiDragging = false
 local function setGuiAlpha(a, instant)
     a = math.clamp(a, 0, 1)
@@ -1086,6 +1139,7 @@ local function setGuiAlpha(a, instant)
     end
     SaveSettings()
 end
+
 local function updateGuiX(px)
     local origin = guiBar.AbsolutePosition.X
     local len = guiBar.AbsoluteSize.X
@@ -1093,6 +1147,7 @@ local function updateGuiX(px)
     local alpha = (px - origin) / len
     setGuiAlpha(alpha, false)
 end
+
 AddConn(guiBar.InputBegan:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.MouseButton1 then
         guiDragging = true
@@ -1100,17 +1155,20 @@ AddConn(guiBar.InputBegan:Connect(function(i)
         updateGuiX(i.Position.X)
     end
 end))
+
 AddConn(guiKnob.InputBegan:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.MouseButton1 then
         guiDragging = true
         isInteractingWithSlider = true
     end
 end))
+
 AddConn(UserInputService.InputChanged:Connect(function(i)
     if guiDragging and i.UserInputType == Enum.UserInputType.MouseMovement then
         updateGuiX(i.Position.X)
     end
 end))
+
 AddConn(UserInputService.InputEnded:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.MouseButton1 then
         if guiDragging then
@@ -1119,13 +1177,16 @@ AddConn(UserInputService.InputEnded:Connect(function(i)
         end
     end
 end))
+
 task.defer(function()
     local alpha = (_G.InvisGuiScale - 20) / (100 - 20)
     setGuiAlpha(alpha, true)
 end)
+
 local draggingPanel = false
 local dragStart
 local startPos
+
 AddConn(DragBar.InputBegan:Connect(function(i)
     if isInteractingWithSlider then return end
     if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
@@ -1134,12 +1195,14 @@ AddConn(DragBar.InputBegan:Connect(function(i)
         startPos = Main.Position
     end
 end))
+
 AddConn(UserInputService.InputChanged:Connect(function(input)
     if draggingPanel and not isInteractingWithSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         local delta = input.Position - dragStart
         Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
     end
 end))
+
 AddConn(UserInputService.InputEnded:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
         if draggingPanel then
@@ -1153,6 +1216,7 @@ AddConn(UserInputService.InputEnded:Connect(function(i)
         end
     end
 end))
+
 AddConn(UserInputService.InputBegan:Connect(function(input, gpe)
     if gpe then return end
     if _G.WaitingForInvisKey and input.UserInputType == Enum.UserInputType.Keyboard then
@@ -1202,6 +1266,7 @@ AddConn(UserInputService.InputBegan:Connect(function(input, gpe)
         end
     end
 end))
+
 do
     local g = getgenv()
     g.EnzoInvisPanelToggle = function()
@@ -1224,3 +1289,18 @@ do
         end
     end
 end
+
+local playerNoclipConnection = RunService.Stepped:Connect(function()
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= LocalPlayer then
+            local char = plr.Character
+            if char then
+                for _, part in ipairs(char:GetDescendants()) do
+                    if part:IsA("BasePart") and part.CanCollide == true then
+                        part.CanCollide = false
+                    end
+                end
+            end
+        end
+    end
+end)
