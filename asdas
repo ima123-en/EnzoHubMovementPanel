@@ -502,7 +502,7 @@ task.spawn(function()
             setupAntiDie()
         end
     end))
-end)
+end))
 
 task.spawn(function()
     local wasStealingForInvis = false
@@ -541,7 +541,7 @@ task.spawn(function()
             wasStealingForInvis = isStealing
         end
     end
-end)
+end))
 
 local function CreateFloatPlatform()
     if FloatPlatform and FloatPlatform.Parent then return end
@@ -669,6 +669,7 @@ local function createOnOffRow(text, y, stateRef, onToggle)
     row.Parent = Main
     local label = Instance.new("TextLabel")
     label.Size = UDim2.new(0.6, 0, 1, 0)
+    label.Position = UDim2.new(0, 0, 0, 0)
     label.BackgroundTransparency = 1
     label.Text = text
     label.Font = Enum.Font.Gotham
@@ -1290,8 +1291,6 @@ do
     end
 end
 
-local detectedClones = {}
-
 local function isClone(model)
     if not model:IsA("Model") then return false end
     if not model:FindFirstChild("HumanoidRootPart") then return false end
@@ -1314,62 +1313,38 @@ local function isClone(model)
     return false
 end
 
-local function collectClones()
-    local clones = {}
-    for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("Model") and isClone(obj) then
-            table.insert(clones, obj)
+local activeClones = {}
+
+local function scanClones()
+    local newClones = {}
+    for _, obj in ipairs(Workspace:GetChildren()) do
+        if isClone(obj) then
+            table.insert(newClones, obj)
         end
     end
-    return clones
+    activeClones = newClones
 end
 
-local function collectCloneParts()
-    local parts = {}
-    for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("Model") and isClone(obj) then
-            for _, p in ipairs(obj:GetDescendants()) do
-                if p:IsA("BasePart") then
-                    parts[p] = true
-                end
-            end
-        end
+task.spawn(function()
+    while task.wait(3) do
+        scanClones()
     end
-    return parts
-end
+end)
 
-local function cloneDescendantAdded(obj)
-    task.wait(0.5)
-    if obj:IsA("Model") and isClone(obj) then
-        detectedClones[obj] = true
-    end
-end
-
-Workspace.DescendantAdded:Connect(cloneDescendantAdded)
-
-local function isClonePart(part)
-    local model = part:FindFirstAncestorOfClass("Model")
-    if not model then return false end
-    return isClone(model)
-end
-
-local playerNoclipConnection = RunService.Stepped:Connect(function()
+local noclipConn = RunService.Stepped:Connect(function()
     for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer then
-            local char = plr.Character
-            if char then
-                for _, part in ipairs(char:GetDescendants()) do
-                    if part:IsA("BasePart") and part.CanCollide == true then
-                        part.CanCollide = false
-                    end
+        if plr ~= LocalPlayer and plr.Character then
+            for _, part in ipairs(plr.Character:GetChildren()) do
+                if part:IsA("BasePart") then
+                    part.CanCollide = false
                 end
             end
         end
     end
-    for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("Model") and isClone(obj) then
-            for _, part in ipairs(obj:GetDescendants()) do
-                if part:IsA("BasePart") and part.CanCollide == true then
+    for _, model in ipairs(activeClones) do
+        if model.Parent then
+            for _, part in ipairs(model:GetChildren()) do
+                if part:IsA("BasePart") then
                     part.CanCollide = false
                 end
             end
