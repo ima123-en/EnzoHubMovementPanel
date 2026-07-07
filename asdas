@@ -28,6 +28,7 @@ _G.InvisGuiPosXScale  = _G.InvisGuiPosXScale  or 0
 _G.InvisGuiPosXOffset = _G.InvisGuiPosXOffset or 20
 _G.InvisGuiPosYScale  = _G.InvisGuiPosYScale  or 0.3
 _G.InvisGuiPosYOffset = _G.InvisGuiPosYOffset or 0
+_G.UnwalkSavedState = (_G.UnwalkSavedState == true)
 
 local SAVE_KEY = "InvisSteal_Settings_" .. LocalPlayer.UserId
 
@@ -42,6 +43,7 @@ local function SaveSettings()
                 INVISIBLE_STEAL_KEY = _G.INVISIBLE_STEAL_KEY,
                 FLOAT_KEY = _G.FLOAT_KEY,
                 InvisGuiScale = _G.InvisGuiScale,
+                UnwalkSavedState = _G.UnwalkSavedState,
                 GuiPos = {
                     XScale = _G.InvisGuiPosXScale or 0,
                     XOffset = _G.InvisGuiPosXOffset or 20,
@@ -64,6 +66,7 @@ local function LoadSettings()
             if data.INVISIBLE_STEAL_KEY then _G.INVISIBLE_STEAL_KEY = data.INVISIBLE_STEAL_KEY end
             if data.FLOAT_KEY then _G.FLOAT_KEY = data.FLOAT_KEY end
             if data.InvisGuiScale ~= nil then _G.InvisGuiScale = data.InvisGuiScale end
+            if data.UnwalkSavedState ~= nil then _G.UnwalkSavedState = data.UnwalkSavedState end
             if data.GuiPos then
                 _G.InvisGuiPosXScale  = data.GuiPos.XScale or 0
                 _G.InvisGuiPosXOffset = data.GuiPos.XOffset or 20
@@ -96,8 +99,35 @@ local FloatConnection
 local FloatPlatform
 local ScreenGui
 local enabledRowUpdate
-local UnwalkState = {value = false}
+local UnwalkState = {value = _G.UnwalkSavedState}
+local UnwalkSuspended = false -- Temporäre Pause für Unwalk während Invis Steal
 local SavedTransparencies = {}
+
+-- =============================================================================
+-- DYNAMISCHE ANTI-DIE IMPLEMENTIERUNG (NUR AKTIV BEI INVIS STEAL)
+-- =============================================================================
+local activeAntiDieConnection = nil
+
+local function stopAntiDie()
+    if activeAntiDieConnection then
+        pcall(function() activeAntiDieConnection:Disconnect() end)
+        activeAntiDieConnection = nil
+    end
+end
+
+local function startAntiDie()
+    stopAntiDie()
+    local character = LocalPlayer.Character
+    if not character then return end
+    local humanoid = character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then return end
+    
+    activeAntiDieConnection = humanoid:GetPropertyChangedSignal("Health"):Connect(function()
+        if humanoid.Health <= 0 then
+            humanoid.Health = humanoid.MaxHealth
+        end
+    end)
+end
 
 local function hideCharacterVisual()
     local character = LocalPlayer.Character
@@ -305,11 +335,17 @@ local function hardDisconnectAll()
     PanelConnections = {}
     folderConnections = {}
     connection = nil
+    stopAntiDie()
 end
 
 local function turnOff()
+    stopAntiDie()
     clearAllGhosts()
     _G.invisibleStealEnabled = false
+    
+    -- BEHEBUNG: Unwalk Pause aufheben
+    UnwalkSuspended = false 
+    
     if not animPlaying then return end
     animPlaying = false
     local character = LocalPlayer.Character
@@ -344,12 +380,20 @@ local function turnOn()
     if not humanoid or humanoid.Health <= 0 then return end
     animPlaying = true
     _G.invisibleStealEnabled = true
+    
+    -- BEHEBUNG: Unwalk für die Dauer des Steals pausieren
+    UnwalkSuspended = true 
+    
+    startAntiDie()
+    
     tracks = {}
     removeFolders()
     local success = doClone()
     if not success then
         animPlaying = false
         _G.invisibleStealEnabled = false
+        stopAntiDie()
+        UnwalkSuspended = false
         return
     end
     hideCharacterVisual()
@@ -425,6 +469,8 @@ local function onCharacterAdded(newChar)
     clearAllGhosts()
     lagbackCallCount = 0
     showCharacterVisual()
+    stopAntiDie()
+    UnwalkSuspended = false -- Reset der Pause beim Spawnen
     pcall(function()
         if Workspace.CurrentCamera then
             for _, c in pairs(Workspace.CurrentCamera:GetChildren()) do
@@ -472,37 +518,6 @@ AddConn(LocalPlayer.CharacterAdded:Connect(function()
     task.wait(0.1)
     setupDeathListener()
 end))
-
-task.spawn(function()
-    local currentConnection = nil
-    _G.AntiDieConnection = nil
-    _G.AntiDieDisabled = false
-    local function setupAntiDie()
-        if _G.AntiDieDisabled then return end
-        local character = LocalPlayer.Character
-        if not character then return end
-        local humanoid = character:FindFirstChildOfClass("Humanoid")
-        if not humanoid then return end
-        if currentConnection then
-            pcall(function() currentConnection:Disconnect() end)
-        end
-        currentConnection = humanoid:GetPropertyChangedSignal("Health"):Connect(function()
-            if _G.AntiDieDisabled then return end
-            if humanoid.Health <= 0 then
-                humanoid.Health = humanoid.MaxHealth
-            end
-        end)
-        _G.AntiDieConnection = currentConnection
-    end
-    _G.setupAntiDie = setupAntiDie
-    setupAntiDie()
-    AddConn(LocalPlayer.CharacterAdded:Connect(function()
-        task.wait(0.5)
-        if not _G.AntiDieDisabled then
-            setupAntiDie()
-        end
-    end))
-end)
 
 task.spawn(function()
     local wasStealingForInvis = false
@@ -1034,11 +1049,14 @@ end
 
 local function unwalkToggleCallback(state)
     UnwalkState.value = state
+    _G.UnwalkSavedState = state
+    SaveSettings()
 end
 
 local unwalkUpdate = createOnOffRow("Unwalk:", 118, UnwalkState, unwalkToggleCallback)
 AddConn(RunService.Heartbeat:Connect(function()
-    if UnwalkState.value then
+    -- BEHEBUNG: Unwalk blockiert nur, wenn es eingeschaltet UND nicht pausiert ist (Invis Steal nicht aktiv)
+    if UnwalkState.value and not UnwalkSuspended then
         disableAnimations()
     end
 end))
@@ -1284,6 +1302,7 @@ do
             pcall(_G.UpdateFloatButton, false, true)
         end
         UnwalkState.value = false
+        UnwalkSuspended = false
         local gui = PlayerGui:FindFirstChild("InvisStealPanel")
         if gui then
             pcall(function() gui:Destroy() end)
