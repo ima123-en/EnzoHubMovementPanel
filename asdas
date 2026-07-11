@@ -29,6 +29,8 @@ _G.InvisGuiPosXOffset = _G.InvisGuiPosXOffset or 20
 _G.InvisGuiPosYScale  = _G.InvisGuiPosYScale  or 0.3
 _G.InvisGuiPosYOffset = _G.InvisGuiPosYOffset or 0
 _G.UnwalkSavedState = (_G.UnwalkSavedState == true)
+_G.WalkSpeedEnabled = (_G.WalkSpeedEnabled == true)
+_G.WalkSpeedValue = _G.WalkSpeedValue or 16
 
 local SAVE_KEY = "InvisSteal_Settings_" .. LocalPlayer.UserId
 
@@ -44,6 +46,8 @@ local function SaveSettings()
                 FLOAT_KEY = _G.FLOAT_KEY,
                 InvisGuiScale = _G.InvisGuiScale,
                 UnwalkSavedState = _G.UnwalkSavedState,
+                WalkSpeedEnabled = _G.WalkSpeedEnabled,
+                WalkSpeedValue = _G.WalkSpeedValue,
                 GuiPos = {
                     XScale = _G.InvisGuiPosXScale or 0,
                     XOffset = _G.InvisGuiPosXOffset or 20,
@@ -67,6 +71,8 @@ local function LoadSettings()
             if data.FLOAT_KEY then _G.FLOAT_KEY = data.FLOAT_KEY end
             if data.InvisGuiScale ~= nil then _G.InvisGuiScale = data.InvisGuiScale end
             if data.UnwalkSavedState ~= nil then _G.UnwalkSavedState = data.UnwalkSavedState end
+            if data.WalkSpeedEnabled ~= nil then _G.WalkSpeedEnabled = data.WalkSpeedEnabled end
+            if data.WalkSpeedValue then _G.WalkSpeedValue = data.WalkSpeedValue end
             if data.GuiPos then
                 _G.InvisGuiPosXScale  = data.GuiPos.XScale or 0
                 _G.InvisGuiPosXOffset = data.GuiPos.XOffset or 20
@@ -100,12 +106,42 @@ local FloatPlatform
 local ScreenGui
 local enabledRowUpdate
 local UnwalkState = {value = _G.UnwalkSavedState}
-local UnwalkSuspended = false -- Temporäre Pause für Unwalk während Invis Steal
+local UnwalkSuspended = false
 local SavedTransparencies = {}
 
--- =============================================================================
--- DYNAMISCHE ANTI-DIE IMPLEMENTIERUNG (NUR AKTIV BEI INVIS STEAL)
--- =============================================================================
+local WalkSpeedState = {enabled = _G.WalkSpeedEnabled or false, conn = nil, speed = _G.WalkSpeedValue or 16}
+
+local function setWalkSpeedEnabled(en)
+    WalkSpeedState.enabled = en
+    _G.WalkSpeedEnabled = en
+    SaveSettings()
+    if WalkSpeedState.conn then WalkSpeedState.conn:Disconnect(); WalkSpeedState.conn = nil end
+    if not en then return end
+    WalkSpeedState.conn = RunService.Heartbeat:Connect(function(dt)
+        local character = LocalPlayer.Character
+        if not character then return end
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        local rootPart = character:FindFirstChild("HumanoidRootPart")
+        if not humanoid or not rootPart or humanoid.Health <= 0 then return end
+        if humanoid.MoveDirection.Magnitude > 0 and WalkSpeedState.speed > humanoid.WalkSpeed then
+            local extraSpeed = WalkSpeedState.speed - humanoid.WalkSpeed
+            rootPart.CFrame = rootPart.CFrame + (humanoid.MoveDirection * extraSpeed * dt)
+        end
+    end)
+    AddConn(WalkSpeedState.conn)
+end
+
+local function setWalkSpeedValue(v)
+    v = math.clamp(math.floor(v + 0.5), 15, 29)
+    WalkSpeedState.speed = v
+    _G.WalkSpeedValue = v
+    SaveSettings()
+    return v
+end
+
+_G.setWalkSpeedEnabled = setWalkSpeedEnabled
+_G.setWalkSpeedValue = setWalkSpeedValue
+
 local activeAntiDieConnection = nil
 
 local function stopAntiDie()
@@ -343,7 +379,6 @@ local function turnOff()
     clearAllGhosts()
     _G.invisibleStealEnabled = false
     
-    -- BEHEBUNG: Unwalk Pause aufheben
     UnwalkSuspended = false 
     
     if not animPlaying then return end
@@ -381,7 +416,6 @@ local function turnOn()
     animPlaying = true
     _G.invisibleStealEnabled = true
     
-    -- BEHEBUNG: Unwalk für die Dauer des Steals pausieren
     UnwalkSuspended = true 
     
     startAntiDie()
@@ -470,7 +504,7 @@ local function onCharacterAdded(newChar)
     lagbackCallCount = 0
     showCharacterVisual()
     stopAntiDie()
-    UnwalkSuspended = false -- Reset der Pause beim Spawnen
+    UnwalkSuspended = false 
     pcall(function()
         if Workspace.CurrentCamera then
             for _, c in pairs(Workspace.CurrentCamera:GetChildren()) do
@@ -617,13 +651,13 @@ ScreenGui.Parent = PlayerGui
 
 local GlobalUIScale = Instance.new("UIScale")
 GlobalUIScale.Name = "GlobalScale"
-GlobalUIScale.Scale = 0.3 + (1.0 - 0.3) * ((_G.InvisGuiScale - 20) / (100 - 20))
+GlobalUIScale.Scale = 0.3 + (1.0 - 0.3) * ((_G.InvisGuiScale - 1) / (100 - 1))
 GlobalUIScale.Parent = ScreenGui
 
 local Main = Instance.new("Frame")
 Main.Name = "Main"
 Main.AnchorPoint = Vector2.new(0, 0)
-Main.Size = UDim2.new(0, 250, 0, 360)
+Main.Size = UDim2.new(0, 250, 0, 410)
 Main.Position = UDim2.new(
     _G.InvisGuiPosXScale or 0,
     _G.InvisGuiPosXOffset or 20,
@@ -733,30 +767,49 @@ local function createOnOffRow(text, y, stateRef, onToggle)
     return update
 end
 
-local function createSliderRow(name, y, minVal, maxVal, getVal, setVal)
+local function createSliderRow(name, y, minVal, maxVal, getVal, setVal, isPercent)
     local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(0.88, 0, 0, 18)
+    label.Size = UDim2.new(0.6, 0, 0, 18)
     label.Position = UDim2.new(0.06, 0, 0, y)
     label.BackgroundTransparency = 1
-    label.Text = name .. ": " .. tostring(getVal())
+    label.Text = name
     label.Font = Enum.Font.Gotham
     label.TextSize = 12
     label.TextColor3 = Color3.fromRGB(230, 230, 230)
     label.TextXAlignment = Enum.TextXAlignment.Left
     label.Parent = Main
+
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.new(0, 55, 0, 20)
+    box.Position = UDim2.new(0.94, -55, 0, y + 6)
+    box.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
+    box.BorderSizePixel = 0
+    box.Font = Enum.Font.GothamBold
+    box.TextSize = 11
+    box.TextColor3 = Color3.fromRGB(255, 255, 255)
+    box.TextXAlignment = Enum.TextXAlignment.Center
+    box.Parent = Main
+    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
+    local boxStroke = Instance.new("UIStroke")
+    boxStroke.Color = Color3.fromRGB(45, 45, 45)
+    boxStroke.Thickness = 1
+    boxStroke.Parent = box
+
     local barBack = Instance.new("Frame")
-    barBack.Size = UDim2.new(0.88, 0, 0, 6)
-    barBack.Position = UDim2.new(0.06, 0, 0, y + 18)
+    barBack.Size = UDim2.new(0.58, 0, 0, 6)
+    barBack.Position = UDim2.new(0.06, 0, 0, y + 20)
     barBack.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
     barBack.BorderSizePixel = 0
     barBack.Parent = Main
     Instance.new("UICorner", barBack).CornerRadius = UDim.new(1, 0)
+
     local fill = Instance.new("Frame")
     fill.Size = UDim2.new(0, 0, 1, 0)
     fill.BackgroundColor3 = Color3.fromRGB(220, 220, 220)
     fill.BorderSizePixel = 0
     fill.Parent = barBack
     Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
+
     local knob = Instance.new("Frame")
     knob.Size = UDim2.new(0, 10, 0, 10)
     knob.Position = UDim2.new(0, -5, 0.5, -5)
@@ -764,31 +817,45 @@ local function createSliderRow(name, y, minVal, maxVal, getVal, setVal)
     knob.BorderSizePixel = 0
     knob.Parent = barBack
     Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
+
     local dragging = false
-    local function setFromAlpha(a, instant)
+
+    local function updateVisuals(value, instant)
+        local alpha = (value - minVal) / (maxVal - minVal)
+        alpha = math.clamp(alpha, 0, 1)
+        
+        if isPercent then
+            box.Text = tostring(math.floor(value)) .. "%"
+        else
+            box.Text = tostring(value)
+        end
+
+        if instant then
+            fill.Size = UDim2.new(alpha, 0, 1, 0)
+            knob.Position = UDim2.new(alpha, -5, 0.5, -5)
+        else
+            TweenService:Create(fill, TweenInfo.new(0.1), {Size = UDim2.new(alpha, 0, 1, 0)}):Play()
+            TweenService:Create(knob, TweenInfo.new(0.1), {Position = UDim2.new(alpha, -5, 0.5, -5)}):Play()
+        end
+    end
+
+    local function setValueFromAlpha(a, instant)
         a = math.clamp(a, 0, 1)
         local v = minVal + (maxVal - minVal) * a
         v = math.floor(v * 10 + 0.5) / 10
+        if v == math.floor(v) then v = math.floor(v) end
         setVal(v)
-        label.Text = name .. ": " .. tostring(v)
-        local len = barBack.AbsoluteSize.X
-        if len <= 0 then return end
-        local px = a * len
-        if instant then
-            fill.Size = UDim2.new(0, px, 1, 0)
-            knob.Position = UDim2.new(0, px - 5, 0.5, -5)
-        else
-            TweenService:Create(fill, TweenInfo.new(0.1), {Size = UDim2.new(0, px, 1, 0)}):Play()
-            TweenService:Create(knob, TweenInfo.new(0.1), {Position = UDim2.new(0, px - 5, 0.5, -5)}):Play()
-        end
+        updateVisuals(v, instant)
     end
+
     local function updateFromX(px)
         local origin = barBack.AbsolutePosition.X
         local len = barBack.AbsoluteSize.X
         if len <= 0 then return end
         local alpha = (px - origin) / len
-        setFromAlpha(alpha, false)
+        setValueFromAlpha(alpha, false)
     end
+
     AddConn(barBack.InputBegan:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1 then
             dragging = true
@@ -796,17 +863,20 @@ local function createSliderRow(name, y, minVal, maxVal, getVal, setVal)
             updateFromX(i.Position.X)
         end
     end))
+
     AddConn(knob.InputBegan:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1 then
             dragging = true
             isInteractingWithSlider = true
         end
     end))
+
     AddConn(UserInputService.InputChanged:Connect(function(i)
         if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
             updateFromX(i.Position.X)
         end
     end))
+
     AddConn(UserInputService.InputEnded:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1 then
             if dragging then
@@ -815,10 +885,23 @@ local function createSliderRow(name, y, minVal, maxVal, getVal, setVal)
             end
         end
     end))
+
+    AddConn(box.FocusLost:Connect(function(enterPressed)
+        local text = box.Text:gsub("%%", "")
+        local num = tonumber(text)
+        if num then
+            num = math.clamp(num, minVal, maxVal)
+            num = math.floor(num * 10 + 0.5) / 10
+            if num == math.floor(num) then num = math.floor(num) end
+            setVal(num)
+            updateVisuals(num, false)
+        else
+            updateVisuals(getVal(), true)
+        end
+    end))
+
     task.defer(function()
-        local v = getVal()
-        local alpha = (v - minVal) / (maxVal - minVal)
-        setFromAlpha(alpha, true)
+        updateVisuals(getVal(), true)
     end)
 end
 
@@ -1053,16 +1136,15 @@ local function unwalkToggleCallback(state)
     SaveSettings()
 end
 
-local unwalkUpdate = createOnOffRow("Unwalk:", 118, UnwalkState, unwalkToggleCallback)
+local unwalkUpdate = createOnOffRow("Unwalk:", 120, UnwalkState, unwalkToggleCallback)
 AddConn(RunService.Heartbeat:Connect(function()
-    -- BEHEBUNG: Unwalk blockiert nur, wenn es eingeschaltet UND nicht pausiert ist (Invis Steal nicht aktiv)
     if UnwalkState.value and not UnwalkSuspended then
         disableAnimations()
     end
 end))
 
 local autoInvisState = {value = _G.AutoInvisDuringSteal}
-local autoInvisUpdate = createCheckRow("Activate on Steal (Invis Steal)", 148, autoInvisState,
+local autoInvisUpdate = createCheckRow("Activate on Steal (Invis Steal)", 150, autoInvisState,
     function(state)
         _G.AutoInvisDuringSteal = state
         SaveSettings()
@@ -1070,7 +1152,7 @@ local autoInvisUpdate = createCheckRow("Activate on Steal (Invis Steal)", 148, a
 )
 
 local autoLagbackState = {value = _G.AutoRecoverLagback}
-local autoLagbackUpdate = createCheckRow("Auto Fix Lagback (Invis Steal)", 172, autoLagbackState,
+local autoLagbackUpdate = createCheckRow("Auto Fix Lagback (Invis Steal)", 174, autoLagbackState,
     function(state)
         _G.AutoRecoverLagback = state
         SaveSettings()
@@ -1085,7 +1167,7 @@ createSliderRow("Rotation", 200, 0, 360,
     end
 )
 
-createSliderRow("Depth", 238, 0, 18,
+createSliderRow("Depth", 240, 0, 18,
     function() return _G.SinkSliderValue end,
     function(v)
         _G.SinkSliderValue = v
@@ -1093,114 +1175,35 @@ createSliderRow("Depth", 238, 0, 18,
     end
 )
 
+local walkSpeedToggleState = {value = _G.WalkSpeedEnabled}
+local walkSpeedToggleUpdate = createOnOffRow("WalkSpeed:", 280, walkSpeedToggleState, function(state)
+    setWalkSpeedEnabled(state)
+end)
+
+createSliderRow("Speed", 310, 15, 29,
+    function() return _G.WalkSpeedValue end,
+    function(v)
+        setWalkSpeedValue(v)
+    end
+)
+
 local settingsDivider = Instance.new("Frame")
 settingsDivider.Size = UDim2.new(0.88, 0, 0, 1)
-settingsDivider.Position = UDim2.new(0.06, 0, 0, 276)
+settingsDivider.Position = UDim2.new(0.06, 0, 0, 348)
 settingsDivider.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 settingsDivider.BorderSizePixel = 0
 settingsDivider.Parent = Main
 
-local guiLabel = Instance.new("TextLabel")
-guiLabel.Size = UDim2.new(0.5, 0, 0, 18)
-guiLabel.Position = UDim2.new(0.06, 0, 0, 284)
-guiLabel.BackgroundTransparency = 1
-guiLabel.Text = "GUI Scale"
-guiLabel.Font = Enum.Font.Gotham
-guiLabel.TextSize = 12
-guiLabel.TextColor3 = Color3.fromRGB(230, 230, 230)
-guiLabel.TextXAlignment = Enum.TextXAlignment.Left
-guiLabel.Parent = Main
-
-local guiBar = Instance.new("Frame")
-guiBar.Size = UDim2.new(0.48, 0, 0, 6)
-guiBar.Position = UDim2.new(0.46, 0, 0, 290)
-guiBar.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-guiBar.BorderSizePixel = 0
-guiBar.Parent = Main
-Instance.new("UICorner", guiBar).CornerRadius = UDim.new(1, 0)
-
-local guiFill = Instance.new("Frame")
-guiFill.Size = UDim2.new(0, 0, 1, 0)
-guiFill.BackgroundColor3 = Color3.fromRGB(220, 220, 220)
-guiFill.BorderSizePixel = 0
-guiFill.Parent = guiBar
-Instance.new("UICorner", guiFill).CornerRadius = UDim.new(1, 0)
-
-local guiKnob = Instance.new("Frame")
-guiKnob.Size = UDim2.new(0, 10, 0, 10)
-guiKnob.Position = UDim2.new(0, -5, 0.5, -5)
-guiKnob.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
-guiKnob.BorderSizePixel = 0
-guiKnob.Parent = guiBar
-Instance.new("UICorner", guiKnob).CornerRadius = UDim.new(1, 0)
-
-local guiDragging = false
-local function setGuiAlpha(a, instant)
-    a = math.clamp(a, 0, 1)
-    local value = math.floor(20 + (100 - 20) * a + 0.5)
-    _G.InvisGuiScale = value
-    local len = guiBar.AbsoluteSize.X
-    if len > 0 then
-        local px = a * len
-        if instant then
-            guiFill.Size = UDim2.new(0, px, 1, 0)
-            guiKnob.Position = UDim2.new(0, px - 5, 0.5, -5)
-        else
-            TweenService:Create(guiFill, TweenInfo.new(0.1), {Size = UDim2.new(0, px, 1, 0)}):Play()
-            TweenService:Create(guiKnob, TweenInfo.new(0.1), {Position = UDim2.new(0, px - 5, 0.5, -5)}):Play()
-        end
-    end
-    local scale = 0.3 + (1.0 - 0.3) * ((value - 20) / (100 - 20))
-    if instant then
+createSliderRow("GUI Scale", 356, 1, 100,
+    function() return _G.InvisGuiScale or 50 end,
+    function(v)
+        _G.InvisGuiScale = v
+        local scale = 0.3 + (1.0 - 0.3) * ((v - 1) / (100 - 1))
         GlobalUIScale.Scale = scale
-    else
-        TweenService:Create(GlobalUIScale, TweenInfo.new(0.15), {Scale = scale}):Play()
-    end
-    SaveSettings()
-end
-
-local function updateGuiX(px)
-    local origin = guiBar.AbsolutePosition.X
-    local len = guiBar.AbsoluteSize.X
-    if len <= 0 then return end
-    local alpha = (px - origin) / len
-    setGuiAlpha(alpha, false)
-end
-
-AddConn(guiBar.InputBegan:Connect(function(i)
-    if i.UserInputType == Enum.UserInputType.MouseButton1 then
-        guiDragging = true
-        isInteractingWithSlider = true
-        updateGuiX(i.Position.X)
-    end
-end))
-
-AddConn(guiKnob.InputBegan:Connect(function(i)
-    if i.UserInputType == Enum.UserInputType.MouseButton1 then
-        guiDragging = true
-        isInteractingWithSlider = true
-    end
-end))
-
-AddConn(UserInputService.InputChanged:Connect(function(i)
-    if guiDragging and i.UserInputType == Enum.UserInputType.MouseMovement then
-        updateGuiX(i.Position.X)
-    end
-end))
-
-AddConn(UserInputService.InputEnded:Connect(function(i)
-    if i.UserInputType == Enum.UserInputType.MouseButton1 then
-        if guiDragging then
-            guiDragging = false
-            isInteractingWithSlider = false
-        end
-    end
-end))
-
-task.defer(function()
-    local alpha = (_G.InvisGuiScale - 20) / (100 - 20)
-    setGuiAlpha(alpha, true)
-end)
+        SaveSettings()
+    end,
+    true
+)
 
 local draggingPanel = false
 local dragStart
@@ -1303,6 +1306,11 @@ do
         end
         UnwalkState.value = false
         UnwalkSuspended = false
+        _G.WalkSpeedEnabled = false
+        if WalkSpeedState.conn then
+            pcall(function() WalkSpeedState.conn:Disconnect() end)
+            WalkSpeedState.conn = nil
+        end
         local gui = PlayerGui:FindFirstChild("InvisStealPanel")
         if gui then
             pcall(function() gui:Destroy() end)
@@ -1370,3 +1378,11 @@ local noclipConn = RunService.Stepped:Connect(function()
         end
     end
 end)
+AddConn(noclipConn)
+
+if _G.WalkSpeedEnabled then
+    task.spawn(function()
+        task.wait(0.5)
+        setWalkSpeedEnabled(true)
+    end)
+end
