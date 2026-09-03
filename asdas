@@ -1,7 +1,6 @@
 if not game:IsLoaded() then game.Loaded:Wait() end
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local HttpService = game:GetService("HttpService")
 local Workspace = game:GetService("Workspace")
@@ -23,74 +22,224 @@ _G.INVISIBLE_STEAL_KEY = _G.INVISIBLE_STEAL_KEY or "I"
 _G.FLOAT_KEY = _G.FLOAT_KEY or "B"
 _G.invisibleStealEnabled = _G.invisibleStealEnabled or false
 _G.RecoveryInProgress = _G.RecoveryInProgress or false
-_G.InvisGuiScale = _G.InvisGuiScale or 50
+_G.InvisGuiScale = _G.InvisGuiScale or 100
 _G.InvisGuiPosXScale  = _G.InvisGuiPosXScale  or 0
 _G.InvisGuiPosXOffset = _G.InvisGuiPosXOffset or 20
-_G.InvisGuiPosYScale  = _G.InvisGuiPosYScale  or 0.3
+_G.InvisGuiPosYScale  = _G.InvisGuiPosYScale  or 0.25
 _G.InvisGuiPosYOffset = _G.InvisGuiPosYOffset or 0
 _G.UnwalkSavedState = (_G.UnwalkSavedState == true)
-_G.WalkSpeedEnabled = (_G.WalkSpeedEnabled == true)
-_G.WalkSpeedValue = _G.WalkSpeedValue or 16
+
+_G.AntiDieDisabled = false
+_G.SMKTAntiDieHz = 0.1
+_G.SMKTTPHealLock = false
+
+local function SMKTStartAntiDie()
+	local antiDieHardened = nil
+	local antiDieConn, antiDieDiedConn, antiDieHbConn = nil, nil, nil
+
+	local function antiDieHardenRaw(hum)
+		if hum.BreakJointsOnDeath then hum.BreakJointsOnDeath = false end
+		if hum.RequiresNeck then hum.RequiresNeck = false end
+		hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
+		hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+		hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+		hum:SetStateEnabled(Enum.HumanoidStateType.Physics, false)
+	end
+	local function antiDieHarden(hum)
+		if antiDieHardened == hum then return end
+		antiDieHardenRaw(hum)
+		antiDieHardened = hum
+	end
+	local function antiDieRevive(hum)
+		pcall(function() hum.Health = hum.MaxHealth end)
+		pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+	end
+	local function antiDieBind()
+		local char = LocalPlayer.Character
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+		if not hum then return end
+		antiDieHarden(hum)
+		if antiDieConn then pcall(function() antiDieConn:Disconnect() end) end
+		if antiDieDiedConn then pcall(function() antiDieDiedConn:Disconnect() end) end
+		if antiDieHbConn then pcall(function() antiDieHbConn:Disconnect() end) end
+		antiDieConn = hum:GetPropertyChangedSignal("Health"):Connect(function()
+			if _G.AntiDieDisabled then return end
+			if hum.Health <= 0 then antiDieRevive(hum) end
+		end)
+		antiDieDiedConn = hum.Died:Connect(function()
+			if _G.AntiDieDisabled then return end
+			antiDieRevive(hum)
+		end)
+		local lastHarden = 0
+		local adAlive = true
+		antiDieHbConn = { Disconnect = function() adAlive = false end }
+		local adTick = function()
+			if _G.AntiDieDisabled or not hum or not hum.Parent then return end
+			local now = os.clock()
+			if now - lastHarden >= 0.5 then lastHarden = now; antiDieHarden(hum) end
+			if hum.Health <= 0 then antiDieRevive(hum) end
+			if _G.SMKTTPHealLock and hum.Health < hum.MaxHealth then
+				hum.Health = hum.MaxHealth
+			end
+			local state = hum:GetState()
+			if state == Enum.HumanoidStateType.Dead or state == Enum.HumanoidStateType.Ragdoll
+				or state == Enum.HumanoidStateType.FallingDown then
+				hum:ChangeState(Enum.HumanoidStateType.Running)
+			end
+		end
+		task.spawn(function()
+			while adAlive do
+				task.wait(tonumber(_G.SMKTAntiDieHz) or 0.1)
+				adTick()
+			end
+		end)
+	end
+	antiDieBind()
+	LocalPlayer.CharacterAdded:Connect(function(char)
+		local hum = char:WaitForChild("Humanoid", 5)
+		if hum then antiDieHarden(hum) end
+		task.wait(0.1)
+		antiDieBind()
+	end)
+end
+
+SMKTStartAntiDie()
+
+_G.SMKTWalkSpeed = _G.SMKTWalkSpeed or 16
+_G.SMKTWalkSpeedOn = _G.SMKTWalkSpeedOn or false
+
+local wsOn = _G.SMKTWalkSpeedOn or false
+local wsConn = nil
+local wsDefaultRestored = false
+
+local function wsWantSpeed()
+	return math.clamp(tonumber(_G.SMKTWalkSpeed) or 16, 16, 29)
+end
+
+local function wsRestoreDefault()
+	pcall(function()
+		local c = LocalPlayer.Character
+		local hum = c and c:FindFirstChildOfClass("Humanoid")
+		if hum then hum.WalkSpeed = 16 end
+	end)
+	wsDefaultRestored = true
+end
+
+local function wsStop()
+	if wsConn then
+		pcall(function() wsConn:Disconnect() end)
+		wsConn = nil
+	end
+	if not wsDefaultRestored then wsRestoreDefault() end
+end
+
+local function wsStart()
+	wsStop()
+	wsDefaultRestored = false
+	wsConn = RunService.Heartbeat:Connect(function(dt)
+		if _G.SMKT_DISABLE_VELOCITY then return end
+		local c = LocalPlayer.Character
+		if not c then return end
+		local hum = c:FindFirstChildOfClass("Humanoid")
+		local hrp = c:FindFirstChild("HumanoidRootPart")
+		if not hum or not hrp or hum.Health <= 0 then return end
+		local want = wsWantSpeed()
+		local md = hum.MoveDirection
+		if md.Magnitude > 0 and want > hum.WalkSpeed then
+			hrp.CFrame = hrp.CFrame + (md * (want - hum.WalkSpeed) * dt)
+		end
+	end)
+end
+
+_G.SMKTSetWalkSpeed = function(on)
+	wsOn = on and true or false
+	_G.SMKTWalkSpeedOn = wsOn
+	if wsOn then
+		wsStart()
+	else
+		wsStop()
+	end
+	if type(_G.SMKTPaintWalkSpeed) == "function" then pcall(_G.SMKTPaintWalkSpeed) end
+end
+
+_G.toggleWalkSpeed = function()
+	_G.SMKTSetWalkSpeed(not wsOn)
+end
+
+LocalPlayer.CharacterAdded:Connect(function()
+	task.wait(0.4)
+	if wsOn then wsStart() end
+end)
+
+if _G.SMKTWalkSpeedOn == true then
+	task.defer(function() _G.SMKTSetWalkSpeed(true) end)
+end
 
 local SAVE_KEY = "InvisSteal_Settings_" .. LocalPlayer.UserId
 
 local function SaveSettings()
-    pcall(function()
-        if writefile then
-            writefile(SAVE_KEY .. ".json", HttpService:JSONEncode({
-                InvisStealAngle = _G.InvisStealAngle,
-                SinkSliderValue = _G.SinkSliderValue,
-                AutoRecoverLagback = _G.AutoRecoverLagback,
-                AutoInvisDuringSteal = _G.AutoInvisDuringSteal,
-                INVISIBLE_STEAL_KEY = _G.INVISIBLE_STEAL_KEY,
-                FLOAT_KEY = _G.FLOAT_KEY,
-                InvisGuiScale = _G.InvisGuiScale,
-                UnwalkSavedState = _G.UnwalkSavedState,
-                WalkSpeedEnabled = _G.WalkSpeedEnabled,
-                WalkSpeedValue = _G.WalkSpeedValue,
-                GuiPos = {
-                    XScale = _G.InvisGuiPosXScale or 0,
-                    XOffset = _G.InvisGuiPosXOffset or 20,
-                    YScale = _G.InvisGuiPosYScale or 0.3,
-                    YOffset = _G.InvisGuiPosYOffset or 0,
-                }
-            }))
-        end
-    end)
+	pcall(function()
+		if writefile then
+			writefile(SAVE_KEY .. ".json", HttpService:JSONEncode({
+				InvisStealAngle = _G.InvisStealAngle,
+				SinkSliderValue = _G.SinkSliderValue,
+				AutoRecoverLagback = _G.AutoRecoverLagback,
+				AutoInvisDuringSteal = _G.AutoInvisDuringSteal,
+				INVISIBLE_STEAL_KEY = _G.INVISIBLE_STEAL_KEY,
+				FLOAT_KEY = _G.FLOAT_KEY,
+				InvisGuiScale = _G.InvisGuiScale,
+				UnwalkSavedState = _G.UnwalkSavedState,
+				SMKTWalkSpeed = _G.SMKTWalkSpeed,
+				SMKTWalkSpeedOn = _G.SMKTWalkSpeedOn,
+				GuiPos = {
+					XScale = _G.InvisGuiPosXScale or 0,
+					XOffset = _G.InvisGuiPosXOffset or 20,
+					YScale = _G.InvisGuiPosYScale or 0.25,
+					YOffset = _G.InvisGuiPosYOffset or 0,
+				}
+			}))
+		end
+	end)
 end
 
 local function LoadSettings()
-    pcall(function()
-        if readfile and isfile and isfile(SAVE_KEY .. ".json") then
-            local data = HttpService:JSONDecode(readfile(SAVE_KEY .. ".json"))
-            if data.InvisStealAngle then _G.InvisStealAngle = data.InvisStealAngle end
-            if data.SinkSliderValue then _G.SinkSliderValue = data.SinkSliderValue end
-            if data.AutoRecoverLagback ~= nil then _G.AutoRecoverLagback = data.AutoRecoverLagback end
-            if data.AutoInvisDuringSteal ~= nil then _G.AutoInvisDuringSteal = data.AutoInvisDuringSteal end
-            if data.INVISIBLE_STEAL_KEY then _G.INVISIBLE_STEAL_KEY = data.INVISIBLE_STEAL_KEY end
-            if data.FLOAT_KEY then _G.FLOAT_KEY = data.FLOAT_KEY end
-            if data.InvisGuiScale ~= nil then _G.InvisGuiScale = data.InvisGuiScale end
-            if data.UnwalkSavedState ~= nil then _G.UnwalkSavedState = data.UnwalkSavedState end
-            if data.WalkSpeedEnabled ~= nil then _G.WalkSpeedEnabled = data.WalkSpeedEnabled end
-            if data.WalkSpeedValue then _G.WalkSpeedValue = data.WalkSpeedValue end
-            if data.GuiPos then
-                _G.InvisGuiPosXScale  = data.GuiPos.XScale or 0
-                _G.InvisGuiPosXOffset = data.GuiPos.XOffset or 20
-                _G.InvisGuiPosYScale  = data.GuiPos.YScale or 0.3
-                _G.InvisGuiPosYOffset = data.GuiPos.YOffset or 0
-            end
-        end
-    end)
+	pcall(function()
+		if readfile and isfile and isfile(SAVE_KEY .. ".json") then
+			local data = HttpService:JSONDecode(readfile(SAVE_KEY .. ".json"))
+			if data.InvisStealAngle then _G.InvisStealAngle = data.InvisStealAngle end
+			if data.SinkSliderValue then _G.SinkSliderValue = data.SinkSliderValue end
+			if data.AutoRecoverLagback ~= nil then _G.AutoRecoverLagback = data.AutoRecoverLagback end
+			if data.AutoInvisDuringSteal ~= nil then _G.AutoInvisDuringSteal = data.AutoInvisDuringSteal end
+			if data.INVISIBLE_STEAL_KEY then _G.INVISIBLE_STEAL_KEY = data.INVISIBLE_STEAL_KEY end
+			if data.FLOAT_KEY then _G.FLOAT_KEY = data.FLOAT_KEY end
+			if data.InvisGuiScale ~= nil then _G.InvisGuiScale = data.InvisGuiScale end
+			if data.UnwalkSavedState ~= nil then _G.UnwalkSavedState = data.UnwalkSavedState end
+			if data.SMKTWalkSpeed then _G.SMKTWalkSpeed = data.SMKTWalkSpeed end
+			if data.SMKTWalkSpeedOn ~= nil then _G.SMKTWalkSpeedOn = data.SMKTWalkSpeedOn end
+			if data.GuiPos then
+				_G.InvisGuiPosXScale  = data.GuiPos.XScale or 0
+				_G.InvisGuiPosXOffset = data.GuiPos.XOffset or 20
+				_G.InvisGuiPosYScale  = data.GuiPos.YScale or 0.25
+				_G.InvisGuiPosYOffset = data.GuiPos.YOffset or 0
+			end
+		end
+	end)
 end
-
 LoadSettings()
 
+local THEME_BG = Color3.fromRGB(12, 12, 14)
+local THEME_PANEL = Color3.fromRGB(18, 18, 22)
+local THEME_BORDER = Color3.fromRGB(30, 30, 35)
+local THEME_ACCENT = Color3.fromRGB(114, 156, 219)
+local THEME_TEXT_PRIMARY = Color3.fromRGB(240, 240, 245)
+local THEME_TEXT_MUTED = Color3.fromRGB(140, 140, 150)
+local THEME_FONT = Enum.Font.RobotoMono
+
+local function corner(o, r) local c = Instance.new("UICorner", o); c.CornerRadius = UDim.new(0, r or 2); return c end
+local function stroke(o, col) local s = Instance.new("UIStroke", o); s.Color = col or THEME_BORDER; s.Thickness = 1; s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; return s end
+
 local PanelConnections = {}
-local function AddConn(conn)
-    if conn then
-        table.insert(PanelConnections, conn)
-    end
-end
+local function AddConn(conn) if conn then table.insert(PanelConnections, conn) end end
 
 local isInteractingWithSlider = false
 local animPlaying = false
@@ -109,539 +258,390 @@ local UnwalkState = {value = _G.UnwalkSavedState}
 local UnwalkSuspended = false
 local SavedTransparencies = {}
 
-local WalkSpeedState = {enabled = _G.WalkSpeedEnabled or false, conn = nil, speed = _G.WalkSpeedValue or 16}
-
-local function setWalkSpeedEnabled(en)
-    WalkSpeedState.enabled = en
-    _G.WalkSpeedEnabled = en
-    SaveSettings()
-    if WalkSpeedState.conn then WalkSpeedState.conn:Disconnect(); WalkSpeedState.conn = nil end
-    if not en then return end
-    WalkSpeedState.conn = RunService.Heartbeat:Connect(function(dt)
-        local character = LocalPlayer.Character
-        if not character then return end
-        local humanoid = character:FindFirstChildOfClass("Humanoid")
-        local rootPart = character:FindFirstChild("HumanoidRootPart")
-        if not humanoid or not rootPart or humanoid.Health <= 0 then return end
-        if humanoid.MoveDirection.Magnitude > 0 and WalkSpeedState.speed > humanoid.WalkSpeed then
-            local extraSpeed = WalkSpeedState.speed - humanoid.WalkSpeed
-            rootPart.CFrame = rootPart.CFrame + (humanoid.MoveDirection * extraSpeed * dt)
-        end
-    end)
-    AddConn(WalkSpeedState.conn)
-end
-
-local function setWalkSpeedValue(v)
-    v = math.clamp(math.floor(v + 0.5), 15, 29)
-    WalkSpeedState.speed = v
-    _G.WalkSpeedValue = v
-    SaveSettings()
-    return v
-end
-
-_G.setWalkSpeedEnabled = setWalkSpeedEnabled
-_G.setWalkSpeedValue = setWalkSpeedValue
-
-local activeAntiDieConnection = nil
-
-local function stopAntiDie()
-    if activeAntiDieConnection then
-        pcall(function() activeAntiDieConnection:Disconnect() end)
-        activeAntiDieConnection = nil
-    end
-end
-
-local function startAntiDie()
-    stopAntiDie()
-    local character = LocalPlayer.Character
-    if not character then return end
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    if not humanoid then return end
-    
-    activeAntiDieConnection = humanoid:GetPropertyChangedSignal("Health"):Connect(function()
-        if humanoid.Health <= 0 then
-            humanoid.Health = humanoid.MaxHealth
-        end
-    end)
-end
+local function stopAntiDie() end
 
 local function hideCharacterVisual()
-    local character = LocalPlayer.Character
-    if not character then return end
-    for _, part in ipairs(character:GetDescendants()) do
-        if part:IsA("BasePart") or part:IsA("Decal") then
-            SavedTransparencies[part] = part.Transparency
-            part.Transparency = 1
-        end
-    end
+	local character = LocalPlayer.Character
+	if not character then return end
+	for _, part in ipairs(character:GetDescendants()) do
+		if part:IsA("BasePart") or part:IsA("Decal") then
+			SavedTransparencies[part] = part.Transparency
+			part.Transparency = 1
+		end
+	end
 end
-
 local function showCharacterVisual()
-    for part, oldT in pairs(SavedTransparencies) do
-        if part and part.Parent then
-            part.Transparency = oldT
-        end
-    end
-    SavedTransparencies = {}
+	for part, oldT in pairs(SavedTransparencies) do
+		if part and part.Parent then part.Transparency = oldT end
+	end
+	SavedTransparencies = {}
 end
 
 local function clearAllGhosts()
-    lagbackCallCount = 0
-    lastLagbackTime = 0
+	lagbackCallCount = 0
+	lastLagbackTime = 0
 end
 
 local function createServerGhost(position)
-    local now = tick()
-    if now - lastLagbackTime < 0.15 then return end
-    lastLagbackTime = now
-    if now - lagbackWindowStart > 3 then
-        lagbackCallCount = 0
-        lagbackWindowStart = now
-    end
-    lagbackCallCount = lagbackCallCount + 1
-    if lagbackCallCount >= 15 then
-        if _G.toggleInvisibleSteal and _G.invisibleStealEnabled then
-            task.spawn(function()
-                pcall(_G.toggleInvisibleSteal)
-            end)
-        end
-        lagbackCallCount = 0
-        return
-    end
+	local now = tick()
+	if now - lastLagbackTime < 0.15 then return end
+	lastLagbackTime = now
+	if now - lagbackWindowStart > 3 then
+		lagbackCallCount = 0
+		lagbackWindowStart = now
+	end
+	lagbackCallCount = lagbackCallCount + 1
+	if lagbackCallCount >= 15 then
+		if _G.toggleInvisibleSteal and _G.invisibleStealEnabled then
+			task.spawn(function() pcall(_G.toggleInvisibleSteal) end)
+		end
+		lagbackCallCount = 0
+		return
+	end
 end
 
 local function removeFolders()
-    local pf = Workspace:FindFirstChild(LocalPlayer.Name)
-    if not pf then return end
-    local dr = pf:FindFirstChild("DoubleRig")
-    if dr then
-        task.spawn(function()
-            pcall(function() dr:Destroy() end)
-        end)
-    end
-    local cs = pf:FindFirstChild("Constraints")
-    if cs then
-        task.spawn(function()
-            pcall(function() cs:Destroy() end)
-        end)
-    end
-    local conn = pf.ChildAdded:Connect(function(child)
-        if child.Name == "DoubleRig" or child.Name == "Constraints" then
-            task.defer(function()
-                task.wait(0.05)
-                pcall(function()
-                    if child and child.Parent then
-                        child:Destroy()
-                    end
-                end)
-            end)
-        end
-    end)
-    table.insert(folderConnections, conn)
-    AddConn(conn)
+	local pf = Workspace:FindFirstChild(LocalPlayer.Name)
+	if not pf then return end
+	local dr = pf:FindFirstChild("DoubleRig")
+	if dr then task.spawn(function() pcall(function() dr:Destroy() end) end) end
+	local cs = pf:FindFirstChild("Constraints")
+	if cs then task.spawn(function() pcall(function() cs:Destroy() end) end) end
+	local conn = pf.ChildAdded:Connect(function(child)
+		if child.Name == "DoubleRig" or child.Name == "Constraints" then
+			task.defer(function()
+				task.wait(0.05)
+				pcall(function() if child and child.Parent then child:Destroy() end end)
+			end)
+		end
+	end)
+	table.insert(folderConnections, conn)
+	AddConn(conn)
 end
 
 local function doClone()
-    local character = LocalPlayer.Character
-    if not character then return false end
-    local humanoid = character:FindFirstChild("Humanoid")
-    if not humanoid or humanoid.Health <= 0 then return false end
-    hip = humanoid.HipHeight
-    oldRoot = character:FindFirstChild("HumanoidRootPart")
-    if not oldRoot or not oldRoot.Parent then return false end
-    for _, c in pairs(oldRoot:GetChildren()) do
-        if c:IsA("Attachment") or c:IsA("Beam") or c:IsA("ParticleEmitter") then
-            pcall(function() c:Destroy() end)
-        end
-    end
-    local success, err = pcall(function()
-        local tmp = Instance.new("Model")
-        tmp.Parent = game
-        character.Parent = tmp
-        clone = oldRoot:Clone()
-        clone.Name = "HumanoidRootPart"
-        clone.Transparency = oldRoot.Transparency
-        clone.CanCollide = true
-        for _, c in pairs(clone:GetChildren()) do
-            if c:IsA("Attachment") or c:IsA("Beam") or c:IsA("ParticleEmitter") then
-                c:Destroy()
-            end
-        end
-        clone.Parent = character
-        oldRoot.Parent = Workspace.CurrentCamera
-        clone.CFrame = oldRoot.CFrame
-        character.PrimaryPart = clone
-        character.Parent = Workspace
-        for _, v in pairs(character:GetDescendants()) do
-            if v:IsA("Weld") or v:IsA("Motor6D") then
-                if v.Part0 == oldRoot then v.Part0 = clone end
-                if v.Part1 == oldRoot then v.Part1 = clone end
-            end
-        end
-        tmp:Destroy()
-    end)
-    if not success then
-        warn("Clone failed:", err)
-        return false
-    end
-    return true
+	local character = LocalPlayer.Character
+	if not character then return false end
+	local humanoid = character:FindFirstChild("Humanoid")
+	if not humanoid or humanoid.Health <= 0 then return false end
+	hip = humanoid.HipHeight
+	oldRoot = character:FindFirstChild("HumanoidRootPart")
+	if not oldRoot or not oldRoot.Parent then return false end
+	for _, c in pairs(oldRoot:GetChildren()) do
+		if c:IsA("Attachment") or c:IsA("Beam") or c:IsA("ParticleEmitter") then
+			pcall(function() c:Destroy() end)
+		end
+	end
+	local success, err = pcall(function()
+		local tmp = Instance.new("Model")
+		tmp.Parent = game
+		character.Parent = tmp
+		clone = oldRoot:Clone()
+		clone.Name = "HumanoidRootPart"
+		clone.Transparency = oldRoot.Transparency
+		clone.CanCollide = true
+		for _, c in pairs(clone:GetChildren()) do
+			if c:IsA("Attachment") or c:IsA("Beam") or c:IsA("ParticleEmitter") then c:Destroy() end
+		end
+		clone.Parent = character
+		oldRoot.Parent = Workspace.CurrentCamera
+		clone.CFrame = oldRoot.CFrame
+		character.PrimaryPart = clone
+		character.Parent = Workspace
+		for _, v in pairs(character:GetDescendants()) do
+			if v:IsA("Weld") or v:IsA("Motor6D") then
+				if v.Part0 == oldRoot then v.Part0 = clone end
+				if v.Part1 == oldRoot then v.Part1 = clone end
+			end
+		end
+		tmp:Destroy()
+	end)
+	if not success then warn("Clone failed:", err) return false end
+	return true
 end
 
 local function revertClone()
-    local character = LocalPlayer.Character
-    if not character then return end
-    local humanoid = character:FindFirstChild("Humanoid")
-    if not humanoid then return end
-    if not oldRoot or not oldRoot:IsDescendantOf(Workspace) then
-        if oldRoot then
-            pcall(function() oldRoot:Destroy() end)
-        end
-        oldRoot = nil
-        clone = nil
-        return
-    end
-    local success = pcall(function()
-        local tmp = Instance.new("Model")
-        tmp.Parent = game
-        character.Parent = tmp
-        oldRoot.Parent = character
-        character.PrimaryPart = oldRoot
-        character.Parent = Workspace
-        oldRoot.CanCollide = true
-        for _, v in pairs(character:GetDescendants()) do
-            if v:IsA("Weld") or v:IsA("Motor6D") then
-                if v.Part0 == clone then v.Part0 = oldRoot end
-                if v.Part1 == clone then v.Part1 = oldRoot end
-            end
-        end
-        if clone then
-            local p = clone.CFrame
-            clone:Destroy()
-            clone = nil
-            oldRoot.CFrame = p
-        end
-        tmp:Destroy()
-    end)
-    if not success then
-        if oldRoot then pcall(function() oldRoot:Destroy() end) end
-        if clone then pcall(function() clone:Destroy() end) end
-    end
-    oldRoot = nil
-    clone = nil
-    if character and humanoid then
-        humanoid.HipHeight = hip or 0
-    end
-    clearAllGhosts()
+	local character = LocalPlayer.Character
+	if not character then return end
+	local humanoid = character:FindFirstChild("Humanoid")
+	if not humanoid then return end
+	if not oldRoot or not oldRoot:IsDescendantOf(Workspace) then
+		if oldRoot then pcall(function() oldRoot:Destroy() end) end
+		oldRoot = nil; clone = nil
+		return
+	end
+	local success = pcall(function()
+		local tmp = Instance.new("Model")
+		tmp.Parent = game
+		character.Parent = tmp
+		oldRoot.Parent = character
+		character.PrimaryPart = oldRoot
+		character.Parent = Workspace
+		oldRoot.CanCollide = true
+		for _, v in pairs(character:GetDescendants()) do
+			if v:IsA("Weld") or v:IsA("Motor6D") then
+				if v.Part0 == clone then v.Part0 = oldRoot end
+				if v.Part1 == clone then v.Part1 = oldRoot end
+			end
+		end
+		if clone then
+			local p = clone.CFrame
+			clone:Destroy(); clone = nil
+			oldRoot.CFrame = p
+		end
+		tmp:Destroy()
+	end)
+	if not success then
+		if oldRoot then pcall(function() oldRoot:Destroy() end) end
+		if clone then pcall(function() clone:Destroy() end) end
+	end
+	oldRoot = nil; clone = nil
+	if character and humanoid then humanoid.HipHeight = hip or 0 end
+	clearAllGhosts()
 end
 
 local function animationTrickery()
-    local character = LocalPlayer.Character
-    if not character then return end
-    local humanoid = character:FindFirstChild("Humanoid")
-    if not humanoid or humanoid.Health <= 0 then return end
-    local anim = Instance.new("Animation")
-    anim.AnimationId = "http://www.roblox.com/asset/?id=18537363391"
-    local animator = humanoid:FindFirstChild("Animator") or Instance.new("Animator", humanoid)
-    local animTrack = animator:LoadAnimation(anim)
-    animTrack.Priority = Enum.AnimationPriority.Action4
-    animTrack:Play(0, 1, 0)
-    anim:Destroy()
-    table.insert(tracks, animTrack)
-    AddConn(animTrack.Stopped:Connect(function()
-        if animPlaying then
-            task.wait(0.05)
-            animationTrickery()
-        end
-    end))
-    task.spawn(function()
-        animTrack.TimePosition = 0.7
-        task.wait(0.3)
-        if animTrack and animTrack.IsPlaying then
-            animTrack:AdjustSpeed(math.huge)
-        end
-    end)
+	local character = LocalPlayer.Character
+	if not character then return end
+	local humanoid = character:FindFirstChild("Humanoid")
+	if not humanoid or humanoid.Health <= 0 then return end
+	local anim = Instance.new("Animation")
+	anim.AnimationId = "http://www.roblox.com/asset/?id=18537363391"
+	local animator = humanoid:FindFirstChild("Animator") or Instance.new("Animator", humanoid)
+	local animTrack = animator:LoadAnimation(anim)
+	animTrack.Priority = Enum.AnimationPriority.Action4
+	animTrack:Play(0, 1, 0)
+	anim:Destroy()
+	table.insert(tracks, animTrack)
+	AddConn(animTrack.Stopped:Connect(function()
+		if animPlaying then task.wait(0.05); animationTrickery() end
+	end))
+	task.spawn(function()
+		animTrack.TimePosition = 0.7
+		task.wait(0.3)
+		if animTrack and animTrack.IsPlaying then animTrack:AdjustSpeed(math.huge) end
+	end)
 end
 
 local function hardDisconnectAll()
-    for _, c in ipairs(PanelConnections) do
-        pcall(function()
-            if c then c:Disconnect() end
-        end)
-    end
-    PanelConnections = {}
-    folderConnections = {}
-    connection = nil
-    stopAntiDie()
+	for _, c in ipairs(PanelConnections) do pcall(function() if c then c:Disconnect() end end) end
+	PanelConnections = {}
+	folderConnections = {}
+	connection = nil
 end
 
 local function turnOff()
-    stopAntiDie()
-    clearAllGhosts()
-    _G.invisibleStealEnabled = false
-    
-    UnwalkSuspended = false 
-    
-    if not animPlaying then return end
-    animPlaying = false
-    local character = LocalPlayer.Character
-    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
-    for _, t in pairs(tracks) do
-        pcall(function()
-            if t and t.IsPlaying then
-                t:Stop()
-            end
-        end)
-    end
-    tracks = {}
-    if connection then
-        pcall(function() connection:Disconnect() end)
-        connection = nil
-    end
-    revertClone()
-    showCharacterVisual()
-    if humanoid and humanoid.Health > 0 then
-        task.wait(0.1)
-        pcall(function()
-            humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-        end)
-    end
+	clearAllGhosts()
+	_G.invisibleStealEnabled = false
+	UnwalkSuspended = false
+	if not animPlaying then return end
+	animPlaying = false
+	local character = LocalPlayer.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	for _, t in pairs(tracks) do pcall(function() if t and t.IsPlaying then t:Stop() end end) end
+	tracks = {}
+	if connection then pcall(function() connection:Disconnect() end); connection = nil end
+	revertClone()
+	showCharacterVisual()
+	if humanoid and humanoid.Health > 0 then
+		task.wait(0.1)
+		pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+	end
 end
 
 local function turnOn()
-    if animPlaying then return end
-    local character = LocalPlayer.Character
-    if not character then return end
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    if not humanoid or humanoid.Health <= 0 then return end
-    animPlaying = true
-    _G.invisibleStealEnabled = true
-    
-    UnwalkSuspended = true 
-    
-    startAntiDie()
-    
-    tracks = {}
-    removeFolders()
-    local success = doClone()
-    if not success then
-        animPlaying = false
-        _G.invisibleStealEnabled = false
-        stopAntiDie()
-        UnwalkSuspended = false
-        return
-    end
-    hideCharacterVisual()
-    task.wait(0.05)
-    animationTrickery()
-    task.defer(function()
-        if _G.resetBrainrotBeam then pcall(_G.resetBrainrotBeam) end
-        if _G.resetPlotBeam then pcall(_G.resetPlotBeam) end
-        task.wait(0.1)
-        if _G.updateBrainrotBeam then pcall(_G.updateBrainrotBeam) end
-        if _G.createPlotBeam then pcall(_G.createPlotBeam) end
-    end)
-    local lastSetPosition = nil
-    local skipFrames = 5
-    connection = RunService.PreSimulation:Connect(function()
-        local char = LocalPlayer.Character
-        if not char then return end
-        local hum = char:FindFirstChild("Humanoid")
-        if not hum or hum.Health <= 0 then return end
-        if not oldRoot or not oldRoot.Parent then return end
-        local root = char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")
-        if not root then return end
-        if skipFrames > 0 then
-            skipFrames = skipFrames - 1
-            lastSetPosition = nil
-            return
-        end
-        if lastSetPosition then
-            local currentPos = oldRoot.Position
-            local jumpDist = (currentPos - lastSetPosition).Magnitude
-            if jumpDist > 8 and not _G.RecoveryInProgress then
-                lastSetPosition = nil
-                createServerGhost(currentPos)
-                if _G.AutoRecoverLagback and _G.toggleInvisibleSteal then
-                    _G.RecoveryInProgress = true
-                    task.spawn(function()
-                        pcall(_G.toggleInvisibleSteal)
-                        task.wait(0.5)
-                        pcall(_G.toggleInvisibleSteal)
-                        _G.RecoveryInProgress = false
-                    end)
-                end
-            end
-        end
-        if clone then
-            clone.CanCollide = true
-        end
-        for _, c in pairs(oldRoot:GetChildren()) do
-            if c:IsA("Attachment") or c:IsA("Beam") or c:IsA("ParticleEmitter") then
-                pcall(function() c:Destroy() end)
-            end
-        end
-        local rotAngle = _G.InvisStealAngle or 233
-        local sa = (_G.SinkSliderValue or 5) * 0.5
-        local cf = root.CFrame - Vector3.new(0, sa, 0)
-        oldRoot.CFrame = cf * CFrame.Angles(math.rad(rotAngle), 0, 0)
-        oldRoot.AssemblyLinearVelocity = root.AssemblyLinearVelocity
-        oldRoot.CanCollide = false
-        lastSetPosition = oldRoot.Position
-    end)
-    AddConn(connection)
+	if animPlaying then return end
+	local character = LocalPlayer.Character
+	if not character then return end
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if not humanoid or humanoid.Health <= 0 then return end
+	animPlaying = true
+	_G.invisibleStealEnabled = true
+	UnwalkSuspended = true
+	tracks = {}
+	removeFolders()
+	local success = doClone()
+	if not success then
+		animPlaying = false
+		_G.invisibleStealEnabled = false
+		UnwalkSuspended = false
+		return
+	end
+	hideCharacterVisual()
+	task.wait(0.05)
+	animationTrickery()
+	task.defer(function()
+		if _G.resetBrainrotBeam then pcall(_G.resetBrainrotBeam) end
+		if _G.resetPlotBeam then pcall(_G.resetPlotBeam) end
+		task.wait(0.1)
+		if _G.updateBrainrotBeam then pcall(_G.updateBrainrotBeam) end
+		if _G.createPlotBeam then pcall(_G.createPlotBeam) end
+	end)
+	local lastSetPosition = nil
+	local skipFrames = 5
+	connection = RunService.PreSimulation:Connect(function()
+		local char = LocalPlayer.Character
+		if not char then return end
+		local hum = char:FindFirstChild("Humanoid")
+		if not hum or hum.Health <= 0 then return end
+		if not oldRoot or not oldRoot.Parent then return end
+		local root = char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")
+		if not root then return end
+		if skipFrames > 0 then skipFrames = skipFrames - 1; lastSetPosition = nil; return end
+		if lastSetPosition then
+			local currentPos = oldRoot.Position
+			local jumpDist = (currentPos - lastSetPosition).Magnitude
+			if jumpDist > 8 and not _G.RecoveryInProgress then
+				lastSetPosition = nil
+				createServerGhost(currentPos)
+				if _G.AutoRecoverLagback and _G.toggleInvisibleSteal then
+					_G.RecoveryInProgress = true
+					task.spawn(function()
+						pcall(_G.toggleInvisibleSteal)
+						task.wait(0.5)
+						pcall(_G.toggleInvisibleSteal)
+						_G.RecoveryInProgress = false
+					end)
+				end
+			end
+		end
+		if clone then clone.CanCollide = true end
+		for _, c in pairs(oldRoot:GetChildren()) do
+			if c:IsA("Attachment") or c:IsA("Beam") or c:IsA("ParticleEmitter") then pcall(function() c:Destroy() end) end
+		end
+		local rotAngle = _G.InvisStealAngle or 233
+		local sa = (_G.SinkSliderValue or 5) * 0.5
+		local cf = root.CFrame - Vector3.new(0, sa, 0)
+		oldRoot.CFrame = cf * CFrame.Angles(math.rad(rotAngle), 0, 0)
+		oldRoot.AssemblyLinearVelocity = root.AssemblyLinearVelocity
+		oldRoot.CanCollide = false
+		lastSetPosition = oldRoot.Position
+	end)
+	AddConn(connection)
 end
 
 _G.toggleInvisibleSteal = function()
-    if animPlaying then
-        turnOff()
-    else
-        turnOn()
-    end
+	if animPlaying then turnOff() else turnOn() end
 end
 
 local function onCharacterAdded(newChar)
-    clearAllGhosts()
-    lagbackCallCount = 0
-    showCharacterVisual()
-    stopAntiDie()
-    UnwalkSuspended = false 
-    pcall(function()
-        if Workspace.CurrentCamera then
-            for _, c in pairs(Workspace.CurrentCamera:GetChildren()) do
-                if c:IsA("BasePart") and c.Name == "HumanoidRootPart" then
-                    c:Destroy()
-                end
-            end
-        end
-    end)
-    if oldRoot then pcall(function() oldRoot:Destroy() end); oldRoot = nil end
-    if clone then pcall(function() clone:Destroy() end); clone = nil end
-    animPlaying = false
-    _G.invisibleStealEnabled = false
-    task.wait(0.2)
-    local camera = Workspace.CurrentCamera
-    if camera and newChar then
-        local h = newChar:FindFirstChildOfClass("Humanoid")
-        if h then
-            camera.CameraSubject = h
-            camera.CameraType = Enum.CameraType.Custom
-        end
-    end
+	clearAllGhosts()
+	lagbackCallCount = 0
+	showCharacterVisual()
+	UnwalkSuspended = false
+	wsStop()
+	pcall(function()
+		if Workspace.CurrentCamera then
+			for _, c in pairs(Workspace.CurrentCamera:GetChildren()) do
+				if c:IsA("BasePart") and c.Name == "HumanoidRootPart" then c:Destroy() end
+			end
+		end
+	end)
+	if oldRoot then pcall(function() oldRoot:Destroy() end); oldRoot = nil end
+	if clone then pcall(function() clone:Destroy() end); clone = nil end
+	animPlaying = false
+	_G.invisibleStealEnabled = false
+	if enabledRowUpdate then pcall(enabledRowUpdate, false) end
+	task.wait(0.2)
+	local camera = Workspace.CurrentCamera
+	if camera and newChar then
+		local h = newChar:FindFirstChildOfClass("Humanoid")
+		if h then camera.CameraSubject = h; camera.CameraType = Enum.CameraType.Custom end
+	end
+	if wsOn then task.wait(0.4); wsStart() end
 end
-
 AddConn(LocalPlayer.CharacterAdded:Connect(onCharacterAdded))
 
 local function setupDeathListener()
-    local ch = LocalPlayer.Character
-    if ch then
-        local h = ch:FindFirstChildOfClass("Humanoid")
-        if h then
-            AddConn(h.Died:Connect(function()
-                clearAllGhosts()
-                lagbackCallCount = 0
-                if animPlaying then
-                    task.spawn(turnOff)
-                end
-            end))
-        end
-    end
+	local ch = LocalPlayer.Character
+	if ch then
+		local h = ch:FindFirstChildOfClass("Humanoid")
+		if h then
+			AddConn(h.Died:Connect(function()
+				clearAllGhosts()
+				lagbackCallCount = 0
+				if animPlaying then task.spawn(turnOff) end
+			end))
+		end
+	end
 end
-
 setupDeathListener()
-AddConn(LocalPlayer.CharacterAdded:Connect(function()
-    task.wait(0.1)
-    setupDeathListener()
-end))
+AddConn(LocalPlayer.CharacterAdded:Connect(function() task.wait(0.1); setupDeathListener() end))
 
 task.spawn(function()
-    local wasStealingForInvis = false
-    local autoEnabledInvis = false
-    task.wait(1)
-    while task.wait(0.1) do
-        if not ScreenGui or not ScreenGui.Parent then
-            break
-        end
-        if _G.AutoInvisDuringSteal == false then
-            wasStealingForInvis = false
-            autoEnabledInvis = false
-        else
-            local isStealing = LocalPlayer:GetAttribute("Stealing")
-            if isStealing and not wasStealingForInvis then
-                if not _G.invisibleStealEnabled and _G.toggleInvisibleSteal then
-                    task.delay(0.5, function()
-                        if not ScreenGui or not ScreenGui.Parent then return end
-                        if LocalPlayer:GetAttribute("Stealing") and not _G.invisibleStealEnabled then
-                            pcall(_G.toggleInvisibleSteal)
-                            autoEnabledInvis = true
-                            if _G.UpdateInvisButton then
-                                _G.UpdateInvisButton(true, false)
-                            end
-                        end
-                    end)
-                end
-            end
-            if not isStealing and autoEnabledInvis and _G.invisibleStealEnabled and _G.toggleInvisibleSteal then
-                pcall(_G.toggleInvisibleSteal)
-                autoEnabledInvis = false
-                if _G.UpdateInvisButton then
-                    _G.UpdateInvisButton(false, false)
-                end
-            end
-            wasStealingForInvis = isStealing
-        end
-    end
+	local wasStealingForInvis = false
+	local autoEnabledInvis = false
+	task.wait(1)
+	while task.wait(0.1) do
+		if not ScreenGui or not ScreenGui.Parent then break end
+		if _G.AutoInvisDuringSteal == false then
+			wasStealingForInvis = false
+			autoEnabledInvis = false
+		else
+			local isStealing = LocalPlayer:GetAttribute("Stealing")
+			if isStealing and not wasStealingForInvis then
+				if not _G.invisibleStealEnabled and _G.toggleInvisibleSteal then
+					task.delay(0.5, function()
+						if not ScreenGui or not ScreenGui.Parent then return end
+						if LocalPlayer:GetAttribute("Stealing") and not _G.invisibleStealEnabled then
+							pcall(_G.toggleInvisibleSteal)
+							autoEnabledInvis = true
+							if _G.UpdateInvisButton then _G.UpdateInvisButton(true) end
+						end
+					end)
+				end
+			end
+			if not isStealing and autoEnabledInvis and _G.invisibleStealEnabled and _G.toggleInvisibleSteal then
+				pcall(_G.toggleInvisibleSteal)
+				autoEnabledInvis = false
+				if _G.UpdateInvisButton then _G.UpdateInvisButton(false) end
+			end
+			wasStealingForInvis = isStealing
+		end
+	end
 end)
 
 local function CreateFloatPlatform()
-    if FloatPlatform and FloatPlatform.Parent then return end
-    local char = LocalPlayer.Character
-    if not char then return end
-    local root = char:FindFirstChild("HumanoidRootPart")
-    if not root then return end
-    local part = Instance.new("Part")
-    part.Size = Vector3.new(6, 1, 6)
-    part.Anchored = true
-    part.CanCollide = true
-    part.Transparency = 0.5
-    part.Color = Color3.fromRGB(40, 40, 40)
-    part.CFrame = CFrame.new(root.Position - Vector3.new(0, 3, 0))
-    part.Name = "EnzoFloatPlatform"
-    part.Parent = Workspace
-    FloatPlatform = part
+	if FloatPlatform and FloatPlatform.Parent then return end
+	local char = LocalPlayer.Character
+	if not char then return end
+	local root = char:FindFirstChild("HumanoidRootPart")
+	if not root then return end
+	local part = Instance.new("Part")
+	part.Size = Vector3.new(6, 1, 6)
+	part.Anchored = true
+	part.CanCollide = true
+	part.Transparency = 0.5
+	part.Color = Color3.fromRGB(40, 40, 40)
+	part.CFrame = CFrame.new(root.Position - Vector3.new(0, 3, 0))
+	part.Name = "EnzoFloatPlatform"
+	part.Parent = Workspace
+	FloatPlatform = part
 end
-
 local function DestroyFloatPlatform()
-    if FloatPlatform then
-        pcall(function() FloatPlatform:Destroy() end)
-        FloatPlatform = nil
-    end
+	if FloatPlatform then pcall(function() FloatPlatform:Destroy() end); FloatPlatform = nil end
 end
-
 local function StartFloat()
-    CreateFloatPlatform()
-    if FloatConnection then return end
-    FloatConnection = RunService.Heartbeat:Connect(function()
-        if not FloatEnabled then return end
-        local char = LocalPlayer.Character
-        if not char then return end
-        local root = char:FindFirstChild("HumanoidRootPart")
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if not root or not hum or hum.Health <= 0 then return end
-        if FloatPlatform then
-            FloatPlatform.CFrame = CFrame.new(root.Position - Vector3.new(0, 3, 0))
-        end
-        root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 14, root.AssemblyLinearVelocity.Z)
-    end)
-    AddConn(FloatConnection)
+	CreateFloatPlatform()
+	if FloatConnection then return end
+	FloatConnection = RunService.Heartbeat:Connect(function()
+		if not FloatEnabled then return end
+		local char = LocalPlayer.Character
+		if not char then return end
+		local root = char:FindFirstChild("HumanoidRootPart")
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		if not root or not hum or hum.Health <= 0 then return end
+		if FloatPlatform then FloatPlatform.CFrame = CFrame.new(root.Position - Vector3.new(0, 3, 0)) end
+		root.AssemblyLinearVelocity = Vector3.new(root.AssemblyLinearVelocity.X, 14, root.AssemblyLinearVelocity.Z)
+	end)
+	AddConn(FloatConnection)
+end
+local function StopFloat()
+	if FloatConnection then FloatConnection:Disconnect(); FloatConnection = nil end
+	DestroyFloatPlatform()
 end
 
-local function StopFloat()
-    if FloatConnection then
-        FloatConnection:Disconnect()
-        FloatConnection = nil
-    end
-    DestroyFloatPlatform()
-end
+local function scaleFromPercent(p) return math.clamp((p or 100) / 100, 0.3, 1.3) end
 
 ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "InvisStealPanel"
@@ -651,738 +651,475 @@ ScreenGui.Parent = PlayerGui
 
 local GlobalUIScale = Instance.new("UIScale")
 GlobalUIScale.Name = "GlobalScale"
-GlobalUIScale.Scale = 0.3 + (1.0 - 0.3) * ((_G.InvisGuiScale - 1) / (100 - 1))
+GlobalUIScale.Scale = scaleFromPercent(_G.InvisGuiScale)
 GlobalUIScale.Parent = ScreenGui
 
 local Main = Instance.new("Frame")
 Main.Name = "Main"
-Main.AnchorPoint = Vector2.new(0, 0)
-Main.Size = UDim2.new(0, 250, 0, 410)
-Main.Position = UDim2.new(
-    _G.InvisGuiPosXScale or 0,
-    _G.InvisGuiPosXOffset or 20,
-    _G.InvisGuiPosYScale or 0.3,
-    _G.InvisGuiPosYOffset or 0
-)
-Main.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+Main.Size = UDim2.new(0, 220, 0, 0)
+Main.AutomaticSize = Enum.AutomaticSize.Y
+Main.Position = UDim2.new(_G.InvisGuiPosXScale or 0, _G.InvisGuiPosXOffset or 20, _G.InvisGuiPosYScale or 0.25, _G.InvisGuiPosYOffset or 0)
+Main.BackgroundColor3 = THEME_BG
 Main.BorderSizePixel = 0
 Main.Parent = ScreenGui
-Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 12)
+corner(Main); stroke(Main)
+local mainPad = Instance.new("UIPadding", Main)
+mainPad.PaddingLeft = UDim.new(0, 6); mainPad.PaddingRight = UDim.new(0, 6)
+mainPad.PaddingTop = UDim.new(0, 6); mainPad.PaddingBottom = UDim.new(0, 6)
+local mainList = Instance.new("UIListLayout", Main)
+mainList.FillDirection = Enum.FillDirection.Vertical
+mainList.SortOrder = Enum.SortOrder.LayoutOrder
+mainList.Padding = UDim.new(0, 3)
 
-local Stroke = Instance.new("UIStroke")
-Stroke.Color = Color3.fromRGB(60, 60, 60)
-Stroke.Thickness = 1
-Stroke.Parent = Main
+local orderCounter = 0
+local function nextOrder() orderCounter += 1; return orderCounter end
 
-local Header = Instance.new("Frame")
-Header.Size = UDim2.new(1, 0, 0, 48)
+local Header = Instance.new("Frame", Main)
+Header.Size = UDim2.new(1, 0, 0, 20)
 Header.BackgroundTransparency = 1
-Header.Parent = Main
+Header.LayoutOrder = nextOrder()
 
-local HeaderTitle = Instance.new("TextLabel")
-HeaderTitle.Size = UDim2.new(1, 0, 0, 24)
-HeaderTitle.Position = UDim2.new(0, 0, 0, 6)
+local HeaderTitle = Instance.new("TextLabel", Header)
+HeaderTitle.Size = UDim2.new(1, -22, 1, 0)
 HeaderTitle.BackgroundTransparency = 1
-HeaderTitle.Text = "Movement Panel"
-HeaderTitle.Font = Enum.Font.GothamBold
-HeaderTitle.TextSize = 16
-HeaderTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
-HeaderTitle.TextXAlignment = Enum.TextXAlignment.Center
-HeaderTitle.Parent = Header
+HeaderTitle.Text = "MOVEMENT"
+HeaderTitle.Font = THEME_FONT
+HeaderTitle.TextSize = 11
+HeaderTitle.TextColor3 = THEME_TEXT_PRIMARY
+HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
 
-local HeaderSub = Instance.new("TextLabel")
-HeaderSub.Size = UDim2.new(1, 0, 0, 18)
-HeaderSub.Position = UDim2.new(0, 0, 0, 26)
-HeaderSub.BackgroundTransparency = 1
-HeaderSub.Text = ""
-HeaderSub.Font = Enum.Font.Gotham
-HeaderSub.TextSize = 12
-HeaderSub.TextColor3 = Color3.fromRGB(190, 190, 190)
-HeaderSub.TextXAlignment = Enum.TextXAlignment.Center
-HeaderSub.Parent = Header
+local CloseBtn = Instance.new("TextButton", Header)
+CloseBtn.AnchorPoint = Vector2.new(1, 0.5)
+CloseBtn.Position = UDim2.new(1, 0, 0.5, 0)
+CloseBtn.Size = UDim2.new(0, 18, 0, 18)
+CloseBtn.BackgroundColor3 = Color3.fromRGB(45, 20, 20)
+CloseBtn.BorderSizePixel = 0
+CloseBtn.Text = "×"
+CloseBtn.Font = THEME_FONT
+CloseBtn.TextSize = 12
+CloseBtn.TextColor3 = THEME_TEXT_PRIMARY
+CloseBtn.AutoButtonColor = true
+corner(CloseBtn); stroke(CloseBtn)
 
-local Divider = Instance.new("Frame")
-Divider.Size = UDim2.new(0.88, 0, 0, 1)
-Divider.Position = UDim2.new(0.06, 0, 0, 50)
-Divider.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-Divider.BorderSizePixel = 0
-Divider.Parent = Main
+local Sep = Instance.new("Frame", Main)
+Sep.Size = UDim2.new(1, 0, 0, 1)
+Sep.BackgroundColor3 = THEME_BORDER
+Sep.BorderSizePixel = 0
+Sep.LayoutOrder = nextOrder()
 
-local DragBar = Header
-
-local function createOnOffRow(text, y, stateRef, onToggle)
-    local row = Instance.new("Frame")
-    row.Size = UDim2.new(0.88, 0, 0, 26)
-    row.Position = UDim2.new(0.06, 0, 0, y)
-    row.BackgroundTransparency = 1
-    row.Parent = Main
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(0.6, 0, 1, 0)
-    label.Position = UDim2.new(0, 0, 0, 0)
-    label.BackgroundTransparency = 1
-    label.Text = text
-    label.Font = Enum.Font.Gotham
-    label.TextSize = 13
-    label.TextColor3 = Color3.fromRGB(230, 230, 230)
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = row
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, 80, 0, 22)
-    btn.Position = UDim2.new(1, -80, 0.5, -11)
-    btn.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
-    btn.Text = ""
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 10
-    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    btn.AutoButtonColor = false
-    btn.Parent = row
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
-    local btnLabel = Instance.new("TextLabel")
-    btnLabel.Size = UDim2.new(1, 0, 1, 0)
-    btnLabel.BackgroundTransparency = 1
-    btnLabel.Font = Enum.Font.GothamBold
-    btnLabel.TextSize = 11
-    btnLabel.Text = stateRef.value and "ON" or "OFF"
-    btnLabel.TextColor3 = stateRef.value and Color3.fromRGB(80, 200, 80) or Color3.fromRGB(200, 80, 80)
-    btnLabel.Parent = btn
-    local function update(state, instant)
-        stateRef.value = state
-        local textCol = state and Color3.fromRGB(80, 200, 80) or Color3.fromRGB(200, 80, 80)
-        local bgCol = state and Color3.fromRGB(40, 40, 40) or Color3.fromRGB(25, 25, 25)
-        btnLabel.Text = state and "ON" or "OFF"
-        if instant then
-            btnLabel.TextColor3 = textCol
-            btn.BackgroundColor3 = bgCol
-        else
-            TweenService:Create(btnLabel, TweenInfo.new(0.15), {TextColor3 = textCol}):Play()
-            TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = bgCol}):Play()
-        end
-    end
-    update(stateRef.value, true)
-    AddConn(btn.MouseButton1Click:Connect(function()
-        local ns = not stateRef.value
-        update(ns, false)
-        onToggle(ns)
-    end))
-    return update
+local function makeSection(text)
+	local l = Instance.new("TextLabel", Main)
+	l.Size = UDim2.new(1, 0, 0, 12)
+	l.BackgroundTransparency = 1
+	l.Font = THEME_FONT
+	l.TextSize = 8
+	l.Text = text:upper()
+	l.TextColor3 = THEME_TEXT_MUTED
+	l.TextXAlignment = Enum.TextXAlignment.Left
+	l.LayoutOrder = nextOrder()
+	return l
 end
 
-local function createSliderRow(name, y, minVal, maxVal, getVal, setVal, isPercent)
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(0.6, 0, 0, 18)
-    label.Position = UDim2.new(0.06, 0, 0, y)
-    label.BackgroundTransparency = 1
-    label.Text = name
-    label.Font = Enum.Font.Gotham
-    label.TextSize = 12
-    label.TextColor3 = Color3.fromRGB(230, 230, 230)
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = Main
-
-    local box = Instance.new("TextBox")
-    box.Size = UDim2.new(0, 55, 0, 20)
-    box.Position = UDim2.new(0.94, -55, 0, y + 6)
-    box.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-    box.BorderSizePixel = 0
-    box.Font = Enum.Font.GothamBold
-    box.TextSize = 11
-    box.TextColor3 = Color3.fromRGB(255, 255, 255)
-    box.TextXAlignment = Enum.TextXAlignment.Center
-    box.Parent = Main
-    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
-    local boxStroke = Instance.new("UIStroke")
-    boxStroke.Color = Color3.fromRGB(45, 45, 45)
-    boxStroke.Thickness = 1
-    boxStroke.Parent = box
-
-    local barBack = Instance.new("Frame")
-    barBack.Size = UDim2.new(0.58, 0, 0, 6)
-    barBack.Position = UDim2.new(0.06, 0, 0, y + 20)
-    barBack.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-    barBack.BorderSizePixel = 0
-    barBack.Parent = Main
-    Instance.new("UICorner", barBack).CornerRadius = UDim.new(1, 0)
-
-    local fill = Instance.new("Frame")
-    fill.Size = UDim2.new(0, 0, 1, 0)
-    fill.BackgroundColor3 = Color3.fromRGB(220, 220, 220)
-    fill.BorderSizePixel = 0
-    fill.Parent = barBack
-    Instance.new("UICorner", fill).CornerRadius = UDim.new(1, 0)
-
-    local knob = Instance.new("Frame")
-    knob.Size = UDim2.new(0, 10, 0, 10)
-    knob.Position = UDim2.new(0, -5, 0.5, -5)
-    knob.BackgroundColor3 = Color3.fromRGB(240, 240, 240)
-    knob.BorderSizePixel = 0
-    knob.Parent = barBack
-    Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
-
-    local dragging = false
-
-    local function updateVisuals(value, instant)
-        local alpha = (value - minVal) / (maxVal - minVal)
-        alpha = math.clamp(alpha, 0, 1)
-        
-        if isPercent then
-            box.Text = tostring(math.floor(value)) .. "%"
-        else
-            box.Text = tostring(value)
-        end
-
-        if instant then
-            fill.Size = UDim2.new(alpha, 0, 1, 0)
-            knob.Position = UDim2.new(alpha, -5, 0.5, -5)
-        else
-            TweenService:Create(fill, TweenInfo.new(0.1), {Size = UDim2.new(alpha, 0, 1, 0)}):Play()
-            TweenService:Create(knob, TweenInfo.new(0.1), {Position = UDim2.new(alpha, -5, 0.5, -5)}):Play()
-        end
-    end
-
-    local function setValueFromAlpha(a, instant)
-        a = math.clamp(a, 0, 1)
-        local v = minVal + (maxVal - minVal) * a
-        v = math.floor(v * 10 + 0.5) / 10
-        if v == math.floor(v) then v = math.floor(v) end
-        setVal(v)
-        updateVisuals(v, instant)
-    end
-
-    local function updateFromX(px)
-        local origin = barBack.AbsolutePosition.X
-        local len = barBack.AbsoluteSize.X
-        if len <= 0 then return end
-        local alpha = (px - origin) / len
-        setValueFromAlpha(alpha, false)
-    end
-
-    AddConn(barBack.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-            isInteractingWithSlider = true
-            updateFromX(i.Position.X)
-        end
-    end))
-
-    AddConn(knob.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-            isInteractingWithSlider = true
-        end
-    end))
-
-    AddConn(UserInputService.InputChanged:Connect(function(i)
-        if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
-            updateFromX(i.Position.X)
-        end
-    end))
-
-    AddConn(UserInputService.InputEnded:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 then
-            if dragging then
-                dragging = false
-                isInteractingWithSlider = false
-            end
-        end
-    end))
-
-    AddConn(box.FocusLost:Connect(function(enterPressed)
-        local text = box.Text:gsub("%%", "")
-        local num = tonumber(text)
-        if num then
-            num = math.clamp(num, minVal, maxVal)
-            num = math.floor(num * 10 + 0.5) / 10
-            if num == math.floor(num) then num = math.floor(num) end
-            setVal(num)
-            updateVisuals(num, false)
-        else
-            updateVisuals(getVal(), true)
-        end
-    end))
-
-    task.defer(function()
-        updateVisuals(getVal(), true)
-    end)
+local function makeRow(height)
+	local row = Instance.new("Frame", Main)
+	row.Size = UDim2.new(1, 0, 0, height or 24)
+	row.BackgroundColor3 = THEME_PANEL
+	row.BorderSizePixel = 0
+	row.LayoutOrder = nextOrder()
+	corner(row); stroke(row)
+	return row
 end
 
-local function createCheckRow(text, y, stateRef, onToggle)
-    local row = Instance.new("Frame")
-    row.Size = UDim2.new(0.88, 0, 0, 22)
-    row.Position = UDim2.new(0.06, 0, 0, y)
-    row.BackgroundTransparency = 1
-    row.Parent = Main
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(0.7, 0, 1, 0)
-    label.BackgroundTransparency = 1
-    label.Text = text
-    label.Font = Enum.Font.Gotham
-    label.TextSize = 12
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.TextColor3 = Color3.fromRGB(230, 230, 230)
-    label.Parent = row
-    local box = Instance.new("TextButton")
-    box.Size = UDim2.new(0, 22, 0, 22)
-    box.Position = UDim2.new(1, -22, 0, 0)
-    box.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-    box.BorderSizePixel = 0
-    box.Text = ""
-    box.AutoButtonColor = false
-    box.Parent = row
-    Instance.new("UICorner", box).CornerRadius = UDim.new(0, 4)
-    local mark = Instance.new("TextLabel")
-    mark.Size = UDim2.new(1, 0, 1, 0)
-    mark.BackgroundTransparency = 1
-    mark.Text = ""
-    mark.Font = Enum.Font.GothamBold
-    mark.TextSize = 16
-    mark.TextColor3 = Color3.fromRGB(230, 230, 230)
-    mark.Parent = box
-    local function update(state, instant)
-        stateRef.value = state
-        if state then
-            mark.Text = "✓"
-            if instant then
-                box.BackgroundColor3 = Color3.fromRGB(80, 200, 80)
-            else
-                TweenService:Create(box, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(80, 200, 80)}):Play()
-            end
-        else
-            mark.Text = ""
-            if instant then
-                box.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-            else
-                TweenService:Create(box, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(25, 25, 25)}):Play()
-            end
-        end
-    end
-    update(stateRef.value, true)
-    AddConn(box.MouseButton1Click:Connect(function()
-        local ns = not stateRef.value
-        update(ns, false)
-        onToggle(ns)
-    end))
-    return update
+local function makeCheckbox(parent, initial, onToggle)
+	local box = Instance.new("TextButton", parent)
+	box.Size = UDim2.new(0, 12, 0, 12)
+	box.Position = UDim2.new(0, 6, 0.5, -6)
+	box.BackgroundColor3 = THEME_BG
+	box.BorderSizePixel = 0
+	box.Text = ""
+	box.AutoButtonColor = false
+	corner(box); stroke(box)
+	local check = Instance.new("Frame", box)
+	check.Size = UDim2.new(0, 6, 0, 6)
+	check.Position = UDim2.new(0.5, -3, 0.5, -3)
+	check.BackgroundColor3 = THEME_ACCENT
+	check.BorderSizePixel = 0
+	check.Visible = initial and true or false
+	corner(check, 1)
+	local state = initial and true or false
+	local function set(v, fire)
+		state = v and true or false
+		check.Visible = state
+		if fire and onToggle then onToggle(state) end
+	end
+	AddConn(box.MouseButton1Click:Connect(function() set(not state, true) end))
+	return set, function() return state end
 end
 
-local invisToggleState = {value = _G.invisibleStealEnabled}
-do
-    local row = Instance.new("Frame")
-    row.Size = UDim2.new(0.88, 0, 0, 26)
-    row.Position = UDim2.new(0.06, 0, 0, 60)
-    row.BackgroundTransparency = 1
-    row.Parent = Main
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(0.6, 0, 1, 0)
-    label.BackgroundTransparency = 1
-    label.Text = "Invis Steal (" .. _G.INVISIBLE_STEAL_KEY .. "):"
-    label.Font = Enum.Font.Gotham
-    label.TextSize = 13
-    label.TextColor3 = Color3.fromRGB(230, 230, 230)
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = row
-    local keyBtn = Instance.new("TextButton")
-    keyBtn.Size = UDim2.new(0, 26, 0, 22)
-    keyBtn.Position = UDim2.new(1, -112, 0.5, -11)
-    keyBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-    keyBtn.BorderSizePixel = 0
-    keyBtn.Text = _G.INVISIBLE_STEAL_KEY
-    keyBtn.Font = Enum.Font.GothamBold
-    keyBtn.TextSize = 11
-    keyBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
-    keyBtn.AutoButtonColor = false
-    keyBtn.Parent = row
-    Instance.new("UICorner", keyBtn).CornerRadius = UDim.new(0, 4)
-    _G.InvisKeyButton = keyBtn
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, 70, 0, 22)
-    btn.Position = UDim2.new(1, -70, 0.5, -11)
-    btn.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-    btn.Text = ""
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 10
-    btn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    btn.AutoButtonColor = false
-    btn.Parent = row
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
-    local btnLabel = Instance.new("TextLabel")
-    btnLabel.Size = UDim2.new(1, 0, 1, 0)
-    btnLabel.BackgroundTransparency = 1
-    btnLabel.Font = Enum.Font.GothamBold
-    btnLabel.TextSize = 11
-    btnLabel.Text = invisToggleState.value and "ON" or "OFF"
-    btnLabel.TextColor3 = invisToggleState.value and Color3.fromRGB(80, 200, 80) or Color3.fromRGB(200, 80, 80)
-    btnLabel.Parent = btn
-    local function upd(state, instant)
-        invisToggleState.value = state
-        local textCol = state and Color3.fromRGB(80, 200, 80) or Color3.fromRGB(200, 80, 80)
-        local bgCol = state and Color3.fromRGB(40, 40, 40) or Color3.fromRGB(25, 25, 25)
-        btnLabel.Text = state and "ON" or "OFF"
-        if instant then
-            btnLabel.TextColor3 = textCol
-            btn.BackgroundColor3 = bgCol
-        else
-            TweenService:Create(btnLabel, TweenInfo.new(0.15), {TextColor3 = textCol}):Play()
-            TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = bgCol}):Play()
-        end
-    end
-    upd(_G.invisibleStealEnabled, true)
-    AddConn(btn.MouseButton1Click:Connect(function()
-        if _G.toggleInvisibleSteal then
-            pcall(_G.toggleInvisibleSteal)
-            upd(_G.invisibleStealEnabled, false)
-        end
-    end))
-    AddConn(keyBtn.MouseButton1Click:Connect(function()
-        _G.WaitingForInvisKey = true
-        keyBtn.Text = "..."
-    end))
-    enabledRowUpdate = upd
-    _G.UpdateInvisButton = upd
+local function makeLabel(parent, text, xOff, width)
+	local label = Instance.new("TextLabel", parent)
+	label.BackgroundTransparency = 1
+	label.Position = UDim2.new(0, xOff or 24, 0, 0)
+	label.Size = width or UDim2.new(1, -30, 1, 0)
+	label.Font = THEME_FONT
+	label.TextSize = 9
+	label.Text = text:upper()
+	label.TextColor3 = THEME_TEXT_PRIMARY
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.TextTruncate = Enum.TextTruncate.AtEnd
+	return label
 end
 
-local floatRowState = {value = false}
-do
-    local row = Instance.new("Frame")
-    row.Size = UDim2.new(0.88, 0, 0, 26)
-    row.Position = UDim2.new(0.06, 0, 0, 90)
-    row.BackgroundTransparency = 1
-    row.Parent = Main
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(0.6, 0, 1, 0)
-    label.BackgroundTransparency = 1
-    label.Text = "Float (" .. _G.FLOAT_KEY .. "):"
-    label.Font = Enum.Font.Gotham
-    label.TextSize = 13
-    label.TextColor3 = Color3.fromRGB(230, 230, 230)
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = row
-    local keyBtn = Instance.new("TextButton")
-    keyBtn.Size = UDim2.new(0, 26, 0, 22)
-    keyBtn.Position = UDim2.new(1, -112, 0.5, -11)
-    keyBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-    keyBtn.BorderSizePixel = 0
-    keyBtn.Text = _G.FLOAT_KEY
-    keyBtn.Font = Enum.Font.GothamBold
-    keyBtn.TextSize = 11
-    keyBtn.TextColor3 = Color3.fromRGB(220, 220, 220)
-    keyBtn.AutoButtonColor = false
-    keyBtn.Parent = row
-    Instance.new("UICorner", keyBtn).CornerRadius = UDim.new(0, 4)
-    _G.FloatKeyButton = keyBtn
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, 70, 0, 22)
-    btn.Position = UDim2.new(1, -70, 0.5, -11)
-    btn.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-    btn.Text = "OFF"
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 11
-    btn.TextColor3 = Color3.fromRGB(200, 80, 80)
-    btn.AutoButtonColor = false
-    btn.Parent = row
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
-    local function updateFloatButton(state, instant)
-        floatRowState.value = state
-        if state then
-            btn.Text = "ON"
-            btn.TextColor3 = Color3.fromRGB(80, 200, 80)
-            if instant then
-                btn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-            else
-                TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(40, 40, 40)}):Play()
-            end
-        else
-            btn.Text = "OFF"
-            btn.TextColor3 = Color3.fromRGB(200, 80, 80)
-            if instant then
-                btn.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-            else
-                TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(25, 25, 25)}):Play()
-            end
-        end
-    end
-    updateFloatButton(FloatEnabled, true)
-    AddConn(keyBtn.MouseButton1Click:Connect(function()
-        _G.WaitingForFloatKey = true
-        keyBtn.Text = "..."
-    end))
-    AddConn(btn.MouseButton1Click:Connect(function()
-        FloatEnabled = not FloatEnabled
-        updateFloatButton(FloatEnabled, false)
-        if FloatEnabled then
-            StartFloat()
-        else
-            StopFloat()
-        end
-    end))
-    _G.UpdateFloatButton = updateFloatButton
+local function createToggleRow(text, initial, onToggle)
+	local row = makeRow(24)
+	local set = makeCheckbox(row, initial, onToggle)
+	makeLabel(row, text, 24, UDim2.new(1, -30, 1, 0))
+	return set
 end
+
+local function createKeyToggleRow(text, keyName, initial, onToggle, onKeyClick)
+	local row = makeRow(24)
+	local set = makeCheckbox(row, initial, onToggle)
+	makeLabel(row, text, 24, UDim2.new(1, -76, 1, 0))
+	local keyBtn = Instance.new("TextButton", row)
+	keyBtn.AnchorPoint = Vector2.new(1, 0.5)
+	keyBtn.Position = UDim2.new(1, -6, 0.5, 0)
+	keyBtn.Size = UDim2.new(0, 42, 0, 16)
+	keyBtn.BackgroundColor3 = THEME_BG
+	keyBtn.BorderSizePixel = 0
+	keyBtn.Font = THEME_FONT
+	keyBtn.TextSize = 9
+	keyBtn.Text = tostring(keyName):upper()
+	keyBtn.TextColor3 = THEME_TEXT_MUTED
+	keyBtn.AutoButtonColor = false
+	corner(keyBtn); stroke(keyBtn)
+	AddConn(keyBtn.MouseButton1Click:Connect(function() if onKeyClick then onKeyClick(keyBtn) end end))
+	return set, keyBtn
+end
+
+local function createSliderRow(labelText, minVal, maxVal, step, getVal, setVal, suffix)
+	local row = makeRow(30)
+	makeLabel(row, labelText, 6, UDim2.new(0.4, -6, 0, 12))
+
+	local box = Instance.new("TextBox", row)
+	box.AnchorPoint = Vector2.new(1, 0)
+	box.Position = UDim2.new(1, -6, 0, 2)
+	box.Size = UDim2.new(0, 44, 0, 14)
+	box.BackgroundColor3 = THEME_BG
+	box.BorderSizePixel = 0
+	box.Font = THEME_FONT
+	box.TextSize = 9
+	box.TextColor3 = THEME_TEXT_PRIMARY
+	box.ClearTextOnFocus = false
+	box.Text = ""
+	corner(box); stroke(box)
+
+	local bar = Instance.new("Frame", row)
+	bar.Position = UDim2.new(0, 6, 1, -8)
+	bar.Size = UDim2.new(1, -12, 0, 3)
+	bar.BackgroundColor3 = THEME_BG
+	bar.BorderSizePixel = 0
+	corner(bar, 1)
+	local fill = Instance.new("Frame", bar)
+	fill.Size = UDim2.new(0, 0, 1, 0)
+	fill.BackgroundColor3 = THEME_ACCENT
+	fill.BorderSizePixel = 0
+	corner(fill, 1)
+	local knob = Instance.new("Frame", bar)
+	knob.Size = UDim2.new(0, 5, 0, 9)
+	knob.AnchorPoint = Vector2.new(0.5, 0.5)
+	knob.Position = UDim2.new(0, 0, 0.5, 0)
+	knob.BackgroundColor3 = THEME_TEXT_PRIMARY
+	knob.BorderSizePixel = 0
+	corner(knob, 1)
+
+	local dragging = false
+	local function roundV(v)
+		v = math.floor(v / step + 0.5) * step
+		if step >= 1 then v = math.floor(v) end
+		return math.clamp(v, minVal, maxVal)
+	end
+	local function visuals(v)
+		local alpha = math.clamp((v - minVal) / (maxVal - minVal), 0, 1)
+		fill.Size = UDim2.new(alpha, 0, 1, 0)
+		knob.Position = UDim2.new(alpha, 0, 0.5, 0)
+		box.Text = tostring(v) .. (suffix or "")
+	end
+	local function apply(v)
+		v = roundV(v)
+		setVal(v)
+		visuals(v)
+	end
+	local function fromX(px)
+		local len = math.max(bar.AbsoluteSize.X, 1)
+		local rel = math.clamp((px - bar.AbsolutePosition.X) / len, 0, 1)
+		apply(minVal + (maxVal - minVal) * rel)
+	end
+	local function beginDrag(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			isInteractingWithSlider = true
+			fromX(i.Position.X)
+		end
+	end
+	AddConn(bar.InputBegan:Connect(beginDrag))
+	AddConn(knob.InputBegan:Connect(beginDrag))
+	AddConn(UserInputService.InputChanged:Connect(function(i)
+		if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+			fromX(i.Position.X)
+		end
+	end))
+	AddConn(UserInputService.InputEnded:Connect(function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+			if dragging then dragging = false; isInteractingWithSlider = false end
+		end
+	end))
+	AddConn(box.FocusLost:Connect(function()
+		local num = tonumber((box.Text:gsub("[^%d%.%-]", "")))
+		if num then apply(num) else visuals(roundV(getVal())) end
+	end))
+	task.defer(function() visuals(roundV(getVal())) end)
+	return visuals
+end
+
+makeSection("Steal")
+
+local invisKeyBtnRef
+local invisSet
+invisSet, invisKeyBtnRef = createKeyToggleRow("Invis Steal", _G.INVISIBLE_STEAL_KEY, _G.invisibleStealEnabled,
+	function()
+		if _G.toggleInvisibleSteal then pcall(_G.toggleInvisibleSteal) end
+		invisSet(_G.invisibleStealEnabled, false)
+	end,
+	function(keyBtn)
+		_G.WaitingForInvisKey = true
+		keyBtn.Text = "..."
+	end
+)
+_G.InvisKeyButton = invisKeyBtnRef
+enabledRowUpdate = function(state) invisSet(state, false) end
+_G.UpdateInvisButton = enabledRowUpdate
+
+local floatKeyBtnRef
+local floatSet
+floatSet, floatKeyBtnRef = createKeyToggleRow("Float", _G.FLOAT_KEY, false,
+	function(state)
+		FloatEnabled = state
+		if FloatEnabled then StartFloat() else StopFloat() end
+	end,
+	function(keyBtn)
+		_G.WaitingForFloatKey = true
+		keyBtn.Text = "..."
+	end
+)
+_G.FloatKeyButton = floatKeyBtnRef
+_G.UpdateFloatButton = function(state) floatSet(state, false) end
 
 local function disableAnimations()
-    local char = LocalPlayer.Character
-    if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum then return end
-    local animator = hum:FindFirstChildOfClass("Animator")
-    if animator then
-        for _, t in ipairs(animator:GetPlayingAnimationTracks()) do
-            pcall(function() t:Stop() end)
-        end
-    end
+	local char = LocalPlayer.Character
+	if not char then return end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hum then return end
+	local animator = hum:FindFirstChildOfClass("Animator")
+	if animator then
+		for _, t in ipairs(animator:GetPlayingAnimationTracks()) do pcall(function() t:Stop() end) end
+	end
 end
 
-local function unwalkToggleCallback(state)
-    UnwalkState.value = state
-    _G.UnwalkSavedState = state
-    SaveSettings()
-end
-
-local unwalkUpdate = createOnOffRow("Unwalk:", 120, UnwalkState, unwalkToggleCallback)
+createToggleRow("Unwalk", UnwalkState.value, function(state)
+	UnwalkState.value = state
+	_G.UnwalkSavedState = state
+	SaveSettings()
+end)
 AddConn(RunService.Heartbeat:Connect(function()
-    if UnwalkState.value and not UnwalkSuspended then
-        disableAnimations()
-    end
+	if UnwalkState.value and not UnwalkSuspended then disableAnimations() end
 end))
 
-local autoInvisState = {value = _G.AutoInvisDuringSteal}
-local autoInvisUpdate = createCheckRow("Activate on Steal (Invis Steal)", 150, autoInvisState,
-    function(state)
-        _G.AutoInvisDuringSteal = state
-        SaveSettings()
-    end
-)
-
-local autoLagbackState = {value = _G.AutoRecoverLagback}
-local autoLagbackUpdate = createCheckRow("Auto Fix Lagback (Invis Steal)", 174, autoLagbackState,
-    function(state)
-        _G.AutoRecoverLagback = state
-        SaveSettings()
-    end
-)
-
-createSliderRow("Rotation", 200, 0, 360,
-    function() return _G.InvisStealAngle end,
-    function(v)
-        _G.InvisStealAngle = v
-        SaveSettings()
-    end
-)
-
-createSliderRow("Depth", 240, 0, 18,
-    function() return _G.SinkSliderValue end,
-    function(v)
-        _G.SinkSliderValue = v
-        SaveSettings()
-    end
-)
-
-local walkSpeedToggleState = {value = _G.WalkSpeedEnabled}
-local walkSpeedToggleUpdate = createOnOffRow("WalkSpeed:", 280, walkSpeedToggleState, function(state)
-    setWalkSpeedEnabled(state)
+createToggleRow("Auto Invis on Steal", _G.AutoInvisDuringSteal, function(state)
+	_G.AutoInvisDuringSteal = state
+	SaveSettings()
 end)
 
-createSliderRow("Speed", 310, 15, 29,
-    function() return _G.WalkSpeedValue end,
-    function(v)
-        setWalkSpeedValue(v)
-    end
+createToggleRow("Fix Lagback", _G.AutoRecoverLagback, function(state)
+	_G.AutoRecoverLagback = state
+	SaveSettings()
+end)
+
+createSliderRow("Rotation", 0, 360, 1,
+	function() return _G.InvisStealAngle end,
+	function(v) _G.InvisStealAngle = v; SaveSettings() end
+)
+createSliderRow("Depth", 0, 18, 0.5,
+	function() return _G.SinkSliderValue end,
+	function(v) _G.SinkSliderValue = v; SaveSettings() end
 )
 
-local settingsDivider = Instance.new("Frame")
-settingsDivider.Size = UDim2.new(0.88, 0, 0, 1)
-settingsDivider.Position = UDim2.new(0.06, 0, 0, 348)
-settingsDivider.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-settingsDivider.BorderSizePixel = 0
-settingsDivider.Parent = Main
+makeSection("WalkSpeed")
 
-createSliderRow("GUI Scale", 356, 1, 100,
-    function() return _G.InvisGuiScale or 50 end,
-    function(v)
-        _G.InvisGuiScale = v
-        local scale = 0.3 + (1.0 - 0.3) * ((v - 1) / (100 - 1))
-        GlobalUIScale.Scale = scale
-        SaveSettings()
-    end,
-    true
+createToggleRow("WalkSpeed", _G.SMKTWalkSpeedOn, function(state)
+	_G.SMKTSetWalkSpeed(state)
+end)
+
+createSliderRow("Speed", 16, 29, 1,
+	function() return _G.SMKTWalkSpeed end,
+	function(v)
+		_G.SMKTWalkSpeed = math.clamp(math.floor(v + 0.5), 16, 29)
+		SaveSettings()
+		if wsOn then wsStart() end
+	end
+)
+
+makeSection("Settings")
+
+createSliderRow("GUI Scale", 30, 130, 1,
+	function() return _G.InvisGuiScale or 100 end,
+	function(v)
+		_G.InvisGuiScale = v
+		GlobalUIScale.Scale = scaleFromPercent(v)
+		SaveSettings()
+	end,
+	"%"
 )
 
 local draggingPanel = false
-local dragStart
-local startPos
-
-AddConn(DragBar.InputBegan:Connect(function(i)
-    if isInteractingWithSlider then return end
-    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-        draggingPanel = true
-        dragStart = i.Position
-        startPos = Main.Position
-    end
+local dragStart, startPos
+AddConn(Header.InputBegan:Connect(function(i)
+	if isInteractingWithSlider then return end
+	if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+		draggingPanel = true
+		dragStart = i.Position
+		startPos = Main.Position
+	end
 end))
-
 AddConn(UserInputService.InputChanged:Connect(function(input)
-    if draggingPanel and not isInteractingWithSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
-        local delta = input.Position - dragStart
-        Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-    end
+	if draggingPanel and not isInteractingWithSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		local delta = input.Position - dragStart
+		Main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+	end
 end))
-
 AddConn(UserInputService.InputEnded:Connect(function(i)
-    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-        if draggingPanel then
-            draggingPanel = false
-            local pos = Main.Position
-            _G.InvisGuiPosXScale  = pos.X.Scale
-            _G.InvisGuiPosXOffset = pos.X.Offset
-            _G.InvisGuiPosYScale  = pos.Y.Scale
-            _G.InvisGuiPosYOffset = pos.Y.Offset
-            SaveSettings()
-        end
-    end
+	if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+		if draggingPanel then
+			draggingPanel = false
+			local pos = Main.Position
+			_G.InvisGuiPosXScale  = pos.X.Scale
+			_G.InvisGuiPosXOffset = pos.X.Offset
+			_G.InvisGuiPosYScale  = pos.Y.Scale
+			_G.InvisGuiPosYOffset = pos.Y.Offset
+			SaveSettings()
+		end
+	end
 end))
 
 AddConn(UserInputService.InputBegan:Connect(function(input, gpe)
-    if gpe then return end
-    if _G.WaitingForInvisKey and input.UserInputType == Enum.UserInputType.Keyboard then
-        _G.WaitingForInvisKey = false
-        local keyName = input.KeyCode.Name
-        if keyName and keyName ~= "Unknown" then
-            _G.INVISIBLE_STEAL_KEY = keyName
-            if _G.InvisKeyButton then _G.InvisKeyButton.Text = keyName end
-            SaveSettings()
-        else
-            if _G.InvisKeyButton then _G.InvisKeyButton.Text = _G.INVISIBLE_STEAL_KEY end
-        end
-        return
-    end
-    if _G.WaitingForFloatKey and input.UserInputType == Enum.UserInputType.Keyboard then
-        _G.WaitingForFloatKey = false
-        local keyName = input.KeyCode.Name
-        if keyName and keyName ~= "Unknown" then
-            _G.FLOAT_KEY = keyName
-            if _G.FloatKeyButton then _G.FloatKeyButton.Text = keyName end
-            SaveSettings()
-        else
-            if _G.FloatKeyButton then _G.FloatKeyButton.Text = _G.FLOAT_KEY end
-        end
-        return
-    end
-    if input.UserInputType == Enum.UserInputType.Keyboard then
-        local invisKeyCode = Enum.KeyCode[_G.INVISIBLE_STEAL_KEY]
-        if invisKeyCode and input.KeyCode == invisKeyCode then
-            pcall(_G.toggleInvisibleSteal)
-            if enabledRowUpdate then
-                enabledRowUpdate(_G.invisibleStealEnabled, false)
-            end
-            return
-        end
-        local floatKeyCode = Enum.KeyCode[_G.FLOAT_KEY]
-        if floatKeyCode and input.KeyCode == floatKeyCode then
-            FloatEnabled = not FloatEnabled
-            if _G.UpdateFloatButton then
-                _G.UpdateFloatButton(FloatEnabled, false)
-            end
-            if FloatEnabled then
-                StartFloat()
-            else
-                StopFloat()
-            end
-        end
-    end
+	if gpe then return end
+	if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
+	local keyName = input.KeyCode.Name
+
+	if _G.WaitingForInvisKey then
+		_G.WaitingForInvisKey = false
+		if keyName and keyName ~= "Unknown" then
+			_G.INVISIBLE_STEAL_KEY = keyName
+			SaveSettings()
+		end
+		if _G.InvisKeyButton then _G.InvisKeyButton.Text = _G.INVISIBLE_STEAL_KEY:upper() end
+		return
+	end
+	if _G.WaitingForFloatKey then
+		_G.WaitingForFloatKey = false
+		if keyName and keyName ~= "Unknown" then
+			_G.FLOAT_KEY = keyName
+			SaveSettings()
+		end
+		if _G.FloatKeyButton then _G.FloatKeyButton.Text = _G.FLOAT_KEY:upper() end
+		return
+	end
+
+	local invisKeyCode = Enum.KeyCode[_G.INVISIBLE_STEAL_KEY]
+	if invisKeyCode and input.KeyCode == invisKeyCode then
+		pcall(_G.toggleInvisibleSteal)
+		if enabledRowUpdate then enabledRowUpdate(_G.invisibleStealEnabled) end
+		return
+	end
+	local floatKeyCode = Enum.KeyCode[_G.FLOAT_KEY]
+	if floatKeyCode and input.KeyCode == floatKeyCode then
+		FloatEnabled = not FloatEnabled
+		if _G.UpdateFloatButton then _G.UpdateFloatButton(FloatEnabled) end
+		if FloatEnabled then StartFloat() else StopFloat() end
+	end
 end))
 
 do
-    local g = getgenv()
-    g.EnzoInvisPanelToggle = function()
-        hardDisconnectAll()
-        showCharacterVisual()
-        if _G.invisibleStealEnabled and _G.toggleInvisibleSteal then
-            pcall(_G.toggleInvisibleSteal)
-        elseif animPlaying then
-            pcall(turnOff)
-        end
-        FloatEnabled = false
-        pcall(StopFloat)
-        if _G.UpdateFloatButton then
-            pcall(_G.UpdateFloatButton, false, true)
-        end
-        UnwalkState.value = false
-        UnwalkSuspended = false
-        _G.WalkSpeedEnabled = false
-        if WalkSpeedState.conn then
-            pcall(function() WalkSpeedState.conn:Disconnect() end)
-            WalkSpeedState.conn = nil
-        end
-        local gui = PlayerGui:FindFirstChild("InvisStealPanel")
-        if gui then
-            pcall(function() gui:Destroy() end)
-        end
-    end
+	local g = getgenv()
+	g.EnzoInvisPanelToggle = function()
+		hardDisconnectAll()
+		showCharacterVisual()
+		if _G.invisibleStealEnabled and _G.toggleInvisibleSteal then
+			pcall(_G.toggleInvisibleSteal)
+		elseif animPlaying then
+			pcall(turnOff)
+		end
+		FloatEnabled = false
+		pcall(StopFloat)
+		UnwalkState.value = false
+		UnwalkSuspended = false
+		wsStop()
+		_G.WaitingForInvisKey = false
+		_G.WaitingForFloatKey = false
+		local gui = PlayerGui:FindFirstChild("InvisStealPanel")
+		if gui then pcall(function() gui:Destroy() end) end
+	end
 end
+AddConn(CloseBtn.MouseButton1Click:Connect(function()
+	pcall(getgenv().EnzoInvisPanelToggle)
+end))
 
 local function isClone(model)
-    if not model:IsA("Model") then return false end
-    if not model:FindFirstChild("HumanoidRootPart") then return false end
-    if not model:FindFirstChildOfClass("Humanoid") then return false end
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player.Character == model then
-            return false
-        end
-    end
-    local humanoid = model:FindFirstChildOfClass("Humanoid")
-    if humanoid then
-        if model.Name:find("Clone") or model.Name:find("clone") then
-            return true
-        end
-        local head = model:FindFirstChild("Head")
-        if head and head:IsA("BasePart") then
-            return true
-        end
-    end
-    return false
+	if not model:IsA("Model") then return false end
+	if not model:FindFirstChild("HumanoidRootPart") then return false end
+	if not model:FindFirstChildOfClass("Humanoid") then return false end
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player.Character == model then return false end
+	end
+	if model.Name:find("Clone") or model.Name:find("clone") then return true end
+	local head = model:FindFirstChild("Head")
+	if head and head:IsA("BasePart") then return true end
+	return false
 end
-
 local activeClones = {}
-
 local function scanClones()
-    local newClones = {}
-    for _, obj in ipairs(Workspace:GetChildren()) do
-        if isClone(obj) then
-            table.insert(newClones, obj)
-        end
-    end
-    activeClones = newClones
+	local newClones = {}
+	for _, obj in ipairs(Workspace:GetChildren()) do
+		if isClone(obj) then table.insert(newClones, obj) end
+	end
+	activeClones = newClones
 end
-
 task.spawn(function()
-    while task.wait(3) do
-        scanClones()
-    end
+	while ScreenGui and ScreenGui.Parent do
+		scanClones()
+		task.wait(3)
+	end
 end)
+AddConn(RunService.Stepped:Connect(function()
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= LocalPlayer and plr.Character then
+			for _, part in ipairs(plr.Character:GetChildren()) do
+				if part:IsA("BasePart") then part.CanCollide = false end
+			end
+		end
+	end
+	for _, model in ipairs(activeClones) do
+		if model.Parent then
+			for _, part in ipairs(model:GetChildren()) do
+				if part:IsA("BasePart") then part.CanCollide = false end
+			end
+		end
+	end
+end))
 
-local noclipConn = RunService.Stepped:Connect(function()
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer and plr.Character then
-            for _, part in ipairs(plr.Character:GetChildren()) do
-                if part:IsA("BasePart") then
-                    part.CanCollide = false
-                end
-            end
-        end
-    end
-    for _, model in ipairs(activeClones) do
-        if model.Parent then
-            for _, part in ipairs(model:GetChildren()) do
-                if part:IsA("BasePart") then
-                    part.CanCollide = false
-                end
-            end
-        end
-    end
-end)
-AddConn(noclipConn)
-
-if _G.WalkSpeedEnabled then
-    task.spawn(function()
-        task.wait(0.5)
-        setWalkSpeedEnabled(true)
-    end)
+if _G.SMKTWalkSpeedOn then
+	task.spawn(function()
+		task.wait(0.5)
+		_G.SMKTSetWalkSpeed(true)
+	end)
 end
