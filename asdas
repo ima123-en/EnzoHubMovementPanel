@@ -4,6 +4,7 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local HttpService = game:GetService("HttpService")
 local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
@@ -15,7 +16,7 @@ if Global.EnzoInvisPanelToggle then pcall(Global.EnzoInvisPanelToggle) end
 local _G = Global
 
 _G.SMKTInvisAngle = _G.SMKTInvisAngle or 180
-_G.SMKTInvisDepth = _G.SMKTInvisDepth or 5
+_G.SMKTInvisDepth = _G.SMKTInvisDepth or 4.2
 _G.SMKTInvisAuto = _G.SMKTInvisAuto or false
 _G.INVISIBLE_STEAL_KEY = _G.INVISIBLE_STEAL_KEY or "I"
 _G.InvisGuiScale = _G.InvisGuiScale or 100
@@ -27,29 +28,171 @@ _G.UnwalkSavedState = (_G.UnwalkSavedState == true)
 _G.AntiDieDisabled = false
 
 task.spawn(function()
-    while true do
-        task.wait(0.1)
-        pcall(function()
-            local char = LocalPlayer.Character
-            if char then
-                local hum = char:FindFirstChildOfClass("Humanoid")
-                local hrp = char:FindFirstChild("HumanoidRootPart")
-                if hum then
-                    hum.BreakJointsOnDeath = false
-                    hum.RequiresNeck = false
-                    hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
-                    hum:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
-                    hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
-                    if hum.Health <= 0 then
-                        hum.Health = hum.MaxHealth
-                        hum:ChangeState(Enum.HumanoidStateType.Running)
-                    end
-                end
-                if hrp and hrp.AssemblyLinearVelocity.Magnitude > 120 then
-                    hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+    local antiRagdollConnections = {}
+    local antiRagdollCharacter, antiRagdollHumanoid, antiRagdollRootPart, antiRagdollAnimator
+    local lastVelocity = Vector3.new(0, 0, 0)
+    local velocityChangeThreshold = 40
+    local velocityMagnitudeThreshold = 25
+    local maxVelocity = 15
+
+    local function isFlyingCarpetActive()
+        if not antiRagdollCharacter then return false end
+        local tool = antiRagdollCharacter:FindFirstChildWhichIsA("Tool")
+        if not tool then return false end
+        local hrp = antiRagdollCharacter:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            for _, obj in ipairs(hrp:GetChildren()) do
+                if obj:IsA("BodyVelocity") or obj:IsA("BodyPosition") or obj:IsA("BodyGyro") then
+                    return true
                 end
             end
+        end
+        return false
+    end
+
+    local function isRagdolled()
+        if not antiRagdollHumanoid then return false end
+        local state = antiRagdollHumanoid:GetState()
+        return state == Enum.HumanoidStateType.Physics
+            or state == Enum.HumanoidStateType.Ragdoll
+            or state == Enum.HumanoidStateType.FallingDown
+            or state == Enum.HumanoidStateType.GettingUp
+    end
+
+    local function enableAntiRagdollControls()
+        pcall(function()
+            local PlayerModule = LocalPlayer:WaitForChild("PlayerScripts"):WaitForChild("PlayerModule", 10)
+            require(PlayerModule):GetControls():Enable()
         end)
+    end
+
+    local function cleanupRagdoll()
+        if not antiRagdollCharacter then return end
+        local carpetEquipped = isFlyingCarpetActive()
+        local function processChildren(parent)
+            for _, obj in ipairs(parent:GetChildren()) do
+                if obj:IsA("BallSocketConstraint") or obj:IsA("NoCollisionConstraint") or obj:IsA("HingeConstraint")
+                    or (obj:IsA("Attachment") and (obj.Name == "A" or obj.Name == "B")) then
+                    obj:Destroy()
+                elseif obj:IsA("BodyVelocity") or obj:IsA("BodyPosition") or obj:IsA("BodyGyro") then
+                    if not carpetEquipped then obj:Destroy() end
+                elseif obj:IsA("Motor6D") then
+                    obj.Enabled = true
+                elseif obj:IsA("BasePart") then
+                    for _, child in ipairs(obj:GetChildren()) do
+                        if child:IsA("Motor6D") then child.Enabled = true
+                        elseif child:IsA("BallSocketConstraint") or child:IsA("NoCollisionConstraint") or child:IsA("HingeConstraint") then child:Destroy()
+                        elseif child:IsA("Attachment") and (child.Name == "A" or child.Name == "B") then child:Destroy() end
+                    end
+                end
+            end
+        end
+        pcall(function() processChildren(antiRagdollCharacter) end)
+        if antiRagdollAnimator then
+            for _, track in pairs(antiRagdollAnimator:GetPlayingAnimationTracks()) do
+                local animName = track.Animation and track.Animation.Name:lower() or ""
+                if animName:find("rag") or animName:find("fall") or animName:find("hurt") or animName:find("down") then
+                    track:Stop(0)
+                end
+            end
+        end
+    end
+
+    local function _harden(hum)
+        pcall(function() hum.BreakJointsOnDeath = false end)
+        pcall(function() hum.RequiresNeck = false end)
+        pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false) end)
+        pcall(function() hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false) end)
+    end
+
+    local function _revive(hum)
+        pcall(function() hum.Health = hum.MaxHealth end)
+        pcall(function() hum:ChangeState(Enum.HumanoidStateType.Running) end)
+    end
+
+    local function setupAntiRagdollCharacter(char)
+        antiRagdollCharacter = char
+        antiRagdollHumanoid = char:WaitForChild("Humanoid", 10)
+        antiRagdollRootPart = char:WaitForChild("HumanoidRootPart", 10)
+        antiRagdollAnimator = antiRagdollHumanoid and antiRagdollHumanoid:WaitForChild("Animator", 10)
+        lastVelocity = Vector3.new(0, 0, 0)
+        if antiRagdollHumanoid then _harden(antiRagdollHumanoid) end
+    end
+
+    local function clearAntiRagdollConnections()
+        for _, c in pairs(antiRagdollConnections) do pcall(function() c:Disconnect() end) end
+        antiRagdollConnections = {}
+    end
+
+    local function setupAntiRagdollConnections()
+        clearAntiRagdollConnections()
+        if not antiRagdollHumanoid or not antiRagdollRootPart then return end
+        _harden(antiRagdollHumanoid)
+
+        table.insert(antiRagdollConnections, antiRagdollHumanoid:GetPropertyChangedSignal("Health"):Connect(function()
+            if _G.AntiDieDisabled then return end
+            if antiRagdollHumanoid and antiRagdollHumanoid.Parent and antiRagdollHumanoid.Health <= 0 then
+                _revive(antiRagdollHumanoid)
+            end
+        end))
+
+        table.insert(antiRagdollConnections, antiRagdollHumanoid.Died:Connect(function()
+            if _G.AntiDieDisabled then return end
+            if antiRagdollHumanoid and antiRagdollHumanoid.Parent then _revive(antiRagdollHumanoid) end
+        end))
+
+        local _lastHarden = 0
+        table.insert(antiRagdollConnections, RunService.Heartbeat:Connect(function()
+            if not antiRagdollHumanoid or not antiRagdollHumanoid.Parent then return end
+            if not _G.AntiDieDisabled then
+                local now = os.clock()
+                if now - _lastHarden >= 1.0 then _lastHarden = now; _harden(antiRagdollHumanoid) end
+                if antiRagdollHumanoid.Health <= 0 then _revive(antiRagdollHumanoid) end
+                if _G.SMKTStealHold and antiRagdollHumanoid.Health < antiRagdollHumanoid.MaxHealth then
+                    pcall(function() antiRagdollHumanoid.Health = antiRagdollHumanoid.MaxHealth end)
+                end
+            end
+            if isRagdolled() then
+                if _G.SMKTStealHold then return end
+                if antiRagdollRootPart.AssemblyLinearVelocity.Magnitude > 60 then
+                    lastVelocity = antiRagdollRootPart.AssemblyLinearVelocity
+                    return
+                end
+                cleanupRagdoll()
+                local velocity = antiRagdollRootPart.AssemblyLinearVelocity
+                if (velocity - lastVelocity).Magnitude > velocityChangeThreshold and velocity.Magnitude > velocityMagnitudeThreshold then
+                    antiRagdollRootPart.AssemblyLinearVelocity = velocity.Unit * math.min(velocity.Magnitude, maxVelocity)
+                end
+                lastVelocity = velocity
+            end
+        end))
+
+        table.insert(antiRagdollConnections, antiRagdollHumanoid.StateChanged:Connect(function()
+            if isRagdolled() then
+                antiRagdollHumanoid:ChangeState(Enum.HumanoidStateType.Running)
+                cleanupRagdoll()
+                pcall(function() Workspace.CurrentCamera.CameraSubject = antiRagdollHumanoid end)
+                enableAntiRagdollControls()
+            end
+        end))
+        enableAntiRagdollControls()
+        cleanupRagdoll()
+    end
+
+    LocalPlayer.CharacterAdded:Connect(function(char)
+        clearAntiRagdollConnections()
+        antiRagdollCharacter = nil; antiRagdollHumanoid = nil; antiRagdollRootPart = nil; antiRagdollAnimator = nil
+        local humanoid = char:WaitForChild("Humanoid", 10)
+        local rootPart = char:WaitForChild("HumanoidRootPart", 10)
+        if not humanoid or not rootPart then return end
+        task.wait(0.2)
+        setupAntiRagdollCharacter(char)
+        setupAntiRagdollConnections()
+    end)
+
+    if LocalPlayer.Character then
+        setupAntiRagdollCharacter(LocalPlayer.Character)
+        setupAntiRagdollConnections()
     end
 end)
 
@@ -61,7 +204,7 @@ local SMKTInvisActive = false
     local start, stop
 
     local function depth()
-        return tonumber(_G.SMKTInvisDepth) or 5
+        return 0.01 + (math.clamp(tonumber(_G.SMKTInvisDepth) or 4.2, 0, 10) / 10) * 0.19
     end
     local function angle()
         return math.clamp(tonumber(_G.SMKTInvisAngle) or 180, 0, 360)
@@ -214,7 +357,7 @@ local SMKTInvisActive = false
                     end
                 end
             end
-            local cf = base.CFrame - Vector3.new(0, depth(), 0)
+            local cf = base.CFrame - Vector3.new(0, hum.HipHeight + (base.Size.Y / 2) - 1 + depth(), 0)
             realHRP.CFrame = cf * CFrame.Angles(math.rad(angle()), 0, 0)
             realHRP.AssemblyLinearVelocity = base.AssemblyLinearVelocity
             realHRP.CanCollide = false
@@ -608,7 +751,7 @@ createStepperRow("Rotation", 0, 360, 5,
     function() return _G.SMKTInvisAngle end,
     function(v) _G.SMKTInvisAngle = v end
 )
-createStepperRow("Depth", 0, 18, 0.2,
+createStepperRow("Depth", 0, 10, 0.2,
     function() return _G.SMKTInvisDepth end,
     function(v) _G.SMKTInvisDepth = v end
 )
