@@ -4,7 +4,6 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local HttpService = game:GetService("HttpService")
 local Workspace = game:GetService("Workspace")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
@@ -16,7 +15,7 @@ if Global.EnzoInvisPanelToggle then pcall(Global.EnzoInvisPanelToggle) end
 local _G = Global
 
 _G.SMKTInvisAngle = _G.SMKTInvisAngle or 180
-_G.SMKTInvisDepth = _G.SMKTInvisDepth or 4.2
+_G.SMKTInvisDepth = _G.SMKTInvisDepth or 4
 _G.SMKTInvisAuto = _G.SMKTInvisAuto or false
 _G.INVISIBLE_STEAL_KEY = _G.INVISIBLE_STEAL_KEY or "I"
 _G.InvisGuiScale = _G.InvisGuiScale or 100
@@ -204,7 +203,7 @@ local SMKTInvisActive = false
     local start, stop
 
     local function depth()
-        return 0.01 + (math.clamp(tonumber(_G.SMKTInvisDepth) or 4.2, 0, 10) / 10) * 0.19
+        return tonumber(_G.SMKTInvisDepth) or 4
     end
     local function angle()
         return math.clamp(tonumber(_G.SMKTInvisAngle) or 180, 0, 360)
@@ -357,7 +356,7 @@ local SMKTInvisActive = false
                     end
                 end
             end
-            local cf = base.CFrame - Vector3.new(0, hum.HipHeight + (base.Size.Y / 2) - 1 + depth(), 0)
+            local cf = base.CFrame - Vector3.new(0, depth(), 0)
             realHRP.CFrame = cf * CFrame.Angles(math.rad(angle()), 0, 0)
             realHRP.AssemblyLinearVelocity = base.AssemblyLinearVelocity
             realHRP.CanCollide = false
