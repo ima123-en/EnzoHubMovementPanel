@@ -15,7 +15,7 @@ if Global.EnzoInvisPanelToggle then pcall(Global.EnzoInvisPanelToggle) end
 local _G = Global
 
 _G.SMKTInvisAngle = _G.SMKTInvisAngle or 180
-_G.SMKTInvisDepth = _G.SMKTInvisDepth or 4
+_G.SMKTInvisDepth = _G.SMKTInvisDepth or 4.2
 _G.SMKTInvisAuto = _G.SMKTInvisAuto or false
 _G.INVISIBLE_STEAL_KEY = _G.INVISIBLE_STEAL_KEY or "I"
 _G.InvisGuiScale = _G.InvisGuiScale or 100
@@ -203,7 +203,7 @@ local SMKTInvisActive = false
     local start, stop
 
     local function depth()
-        return tonumber(_G.SMKTInvisDepth) or 4
+        return 0.01 + (math.clamp(tonumber(_G.SMKTInvisDepth) or 4.2, 0, 10) / 10) * 0.19
     end
     local function angle()
         return math.clamp(tonumber(_G.SMKTInvisAngle) or 180, 0, 360)
@@ -289,6 +289,9 @@ local SMKTInvisActive = false
                 local x = folder:FindFirstChild(n)
                 if x then x:Destroy() end
             end
+            add(folder.ChildAdded:Connect(function(c)
+                if c.Name == "DoubleRig" or c.Name == "Constraints" then c:Destroy() end
+            end))
         end
         for _, s in ipairs({ "Dead", "FallingDown", "Ragdoll" }) do
             hum:SetStateEnabled(Enum.HumanoidStateType[s], false)
@@ -311,9 +314,6 @@ local SMKTInvisActive = false
         tmp:Destroy()
 
         active = true
-        SMKTInvisActive = true
-        _G.invisibleStealEnabled = true
-        if _G.UpdateInvisButton then _G.UpdateInvisButton(true) end
         animTrick(char, hum)
 
         origT = {}
@@ -323,12 +323,19 @@ local SMKTInvisActive = false
                 p.LocalTransparencyModifier = 1
             end
         end
+        add(char.DescendantAdded:Connect(function(d)
+            if not (active and d:IsA("BasePart")) then return end
+            if origT and origT[d] == nil then origT[d] = d.LocalTransparencyModifier end
+            pcall(function() d.LocalTransparencyModifier = 1 end)
+        end))
 
         add(RunService.Heartbeat:Connect(function()
             if not active or not hum.Parent then return end
             hum.Health = hum.MaxHealth
+            hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
             local st = hum:GetState()
-            if st == Enum.HumanoidStateType.Dead or st == Enum.HumanoidStateType.FallingDown or st == Enum.HumanoidStateType.Ragdoll then
+            if st == Enum.HumanoidStateType.Dead or st == Enum.HumanoidStateType.FallingDown
+                or st == Enum.HumanoidStateType.Ragdoll then
                 hum:ChangeState(Enum.HumanoidStateType.Running)
             end
         end))
@@ -351,12 +358,17 @@ local SMKTInvisActive = false
                             pcall(stop)
                             task.wait(0.5)
                             restarting = false
-                            pcall(start)
+                            local ok = pcall(start)
+                            if not ok then
+                                task.wait(1)
+                                pcall(start)
+                            end
                         end)
                     end
                 end
             end
-            local cf = base.CFrame - Vector3.new(0, depth(), 0)
+            local cf = base.CFrame
+                - Vector3.new(0, hum.HipHeight + (base.Size.Y / 2) - 1 + depth(), 0)
             realHRP.CFrame = cf * CFrame.Angles(math.rad(angle()), 0, 0)
             realHRP.AssemblyLinearVelocity = base.AssemblyLinearVelocity
             realHRP.CanCollide = false
@@ -367,6 +379,9 @@ local SMKTInvisActive = false
         end))
 
         add(LocalPlayer.CharacterAdded:Connect(function() if active then stop() end end))
+        SMKTInvisActive = true
+        _G.invisibleStealEnabled = true
+        if _G.UpdateInvisButton then _G.UpdateInvisButton(true) end
         return true
     end
 
@@ -376,19 +391,21 @@ local SMKTInvisActive = false
         if active then stop() else start() end
     end
 
-    local armed = false
+    local armed, autoOn = false, false
     local function syncAuto()
         local want = (_G.SMKTInvisAuto == true) and (LocalPlayer:GetAttribute("Stealing") == true)
         if not want then
             armed = false
-            if active then pcall(stop) end
+            if active and autoOn then autoOn = false pcall(stop) end
             return
         end
         if active or armed then return end
         armed = true
-        task.delay(0.5, function()
+        task.delay(tonumber(_G.SMKTInvisAutoDelay) or 1.5, function()
             armed = false
-            if _G.SMKTInvisAuto == true and not active and LocalPlayer:GetAttribute("Stealing") == true then
+            if _G.SMKTInvisAuto == true and not active
+                and LocalPlayer:GetAttribute("Stealing") == true then
+                autoOn = true
                 pcall(start)
             end
         end)
