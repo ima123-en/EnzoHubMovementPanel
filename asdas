@@ -244,8 +244,6 @@ local SMKTInvisActive = false
         pcall(stripAC, c and c:FindFirstChild("HumanoidRootPart"))
         if oldRoot then pcall(stripAC, oldRoot) end
     end
-    task.spawn(function() while true do pcall(_G.SMKTStripAC) task.wait(6) end end)
-    LocalPlayer.CharacterAdded:Connect(function() task.wait(0.3) pcall(_G.SMKTStripAC) end)
 
     local function clearLag()
         lagCount = 0
@@ -274,17 +272,55 @@ local SMKTInvisActive = false
         folderConns = {}
     end
 
-    local function removeFolders()
-        clearFolders()
+    local stashed = {}
+    local nearBase = false
+
+    local function stashObj(x, par)
+        if not x then return end
+        local old = stashed[x.Name]
+        if old and old[1] ~= x then pcall(function() old[1]:Destroy() end) end
+        stashed[x.Name] = { x, par }
+        pcall(function() x.Parent = nil end)
+    end
+
+    local function restoreStashed()
+        for name, e in pairs(stashed) do
+            local x, par = e[1], e[2]
+            pcall(function()
+                if par and par.Parent and not par:FindFirstChild(name) then
+                    x.Parent = par
+                else
+                    x:Destroy()
+                end
+            end)
+        end
+        stashed = {}
+    end
+
+    local function dropStashed()
+        for _, e in pairs(stashed) do pcall(function() e[1]:Destroy() end) end
+        stashed = {}
+    end
+
+    local function stashCurrent()
         local pf = Workspace:FindFirstChild(LocalPlayer.Name)
         if not pf then return end
         for _, n in ipairs({ "DoubleRig", "Constraints" }) do
             local x = pf:FindFirstChild(n)
-            if x then pcall(function() x:Destroy() end) end
+            if x then stashObj(x, pf) end
         end
+    end
+
+    local function removeFolders()
+        clearFolders()
+        local pf = Workspace:FindFirstChild(LocalPlayer.Name)
+        if not pf then return end
+        if not nearBase then stashCurrent() end
         folderConns[#folderConns + 1] = pf.ChildAdded:Connect(function(child)
             if child.Name == "DoubleRig" or child.Name == "Constraints" then
-                pcall(function() child:Destroy() end)
+                task.defer(function()
+                    if child.Parent == pf and not nearBase then stashObj(child, pf) end
+                end)
             end
         end)
     end
@@ -387,8 +423,7 @@ local SMKTInvisActive = false
         end)
     end
 
-    _G.SMKTLocalNormalAnim = true
-    local LA = { dummy = nil, pairs = {}, tracks = {}, conns = {}, cur = nil }
+    local LA = { dummy = nil, pairs = {}, tracks = {}, conns = {}, cur = nil, nReal = 0, nDummy = 0 }
     local LA_DEFAULTS = {
         idle = "rbxassetid://507766666", walk = "rbxassetid://507777826", run = "rbxassetid://507767714",
         jump = "rbxassetid://507765000", fall = "rbxassetid://507767968",
@@ -419,16 +454,13 @@ local SMKTInvisActive = false
     end
 
     local function laInfo(j)
-        if j:IsA("Motor6D") then
-            return j.Name, j.Part1 and j.Part1.Name
-        end
+        if j:IsA("Motor6D") then return j.Name, j.Part1 and j.Part1.Name end
         local a1 = j.Attachment1
         return j.Name, a1 and a1.Parent and a1.Parent.Name
     end
 
     local function laStart(char, hum)
         laStop()
-        if _G.SMKTLocalNormalAnim == false then return end
         local ok, err = pcall(function()
             local arch = {}
             arch[char] = char.Archivable
@@ -443,6 +475,9 @@ local SMKTInvisActive = false
             for x, v in pairs(arch) do pcall(function() x.Archivable = v end) end
             if not d then error("clone nil") end
             d.Name = "SMKTLocalRig"
+            for _, x in ipairs(d:GetChildren()) do
+                if x:IsA("Model") or x:IsA("Tool") or x:IsA("Folder") then x:Destroy() end
+            end
             for _, x in ipairs(d:GetDescendants()) do
                 if x:IsA("LuaSourceContainer") or x:IsA("Sound") or x:IsA("BillboardGui") or x:IsA("SurfaceGui")
                     or x:IsA("ParticleEmitter") or x:IsA("Beam") or x:IsA("Trail") then
@@ -514,7 +549,7 @@ local SMKTInvisActive = false
         end
         local nT = 0
         for _ in pairs(LA.tracks) do nT += 1 end
-        print(("[SMKT] Normal Anim aktiv: %d Gelenke verbunden (du: %d, Kopie: %d), %d Animationen"):format(#LA.pairs, LA.nReal or 0, LA.nDummy or 0, nT))
+        print(("[SMKT] Normal Anim aktiv: %d Gelenke verbunden (du: %d, Kopie: %d), %d Animationen"):format(#LA.pairs, LA.nReal, LA.nDummy, nT))
         if LA.nReal == 0 then
             local cls = {}
             for _, x in ipairs(char:GetDescendants()) do
@@ -563,7 +598,37 @@ local SMKTInvisActive = false
         LA.conns[#LA.conns + 1] = RunService.Heartbeat:Connect(copy)
         LA.conns[#LA.conns + 1] = RunService.RenderStepped:Connect(copy)
     end
-    _G.SMKTLocalAnimStop = laStop
+
+    local myPlotCache, myPlotAt = nil, 0
+    local function findMyPlot()
+        if myPlotCache and myPlotCache.Parent and os.clock() - myPlotAt < 5 then return myPlotCache end
+        myPlotAt = os.clock()
+        myPlotCache = nil
+        local plots = Workspace:FindFirstChild("Plots")
+        if not plots then return nil end
+        for _, p in ipairs(plots:GetChildren()) do
+            local sign = p:FindFirstChild("PlotSign")
+            local yb = sign and sign:FindFirstChild("YourBase", true)
+            if yb and yb:IsA("BillboardGui") and yb.Enabled then
+                myPlotCache = p
+                break
+            end
+        end
+        return myPlotCache
+    end
+
+    local function atMyBase()
+        local char = LocalPlayer.Character
+        local root = char and (char.PrimaryPart or char:FindFirstChild("HumanoidRootPart"))
+        if not root then return false end
+        local plot = findMyPlot()
+        if not plot then return false end
+        local ok, cf, size = pcall(function() return plot:GetBoundingBox() end)
+        if not ok or not cf then return false end
+        local lp = cf:PointToObjectSpace(root.Position)
+        return math.abs(lp.X) <= size.X / 2 + 20 and math.abs(lp.Z) <= size.Z / 2 + 20
+    end
+    _G.SMKTAtMyBase = atMyBase
 
     local turnOff, turnOn
 
@@ -587,6 +652,7 @@ local SMKTInvisActive = false
         laStop()
         clearFolders()
         revertClone()
+        restoreStashed()
         showVis()
         if humanoid and humanoid.Health > 0 then
             task.wait(0.1)
@@ -603,12 +669,12 @@ local SMKTInvisActive = false
         animPlaying = true
         _G.invisibleStealEnabled = true
         tracks = {}
-        pcall(stripAC, character:FindFirstChild("HumanoidRootPart"))
         removeFolders()
         if not doClone() then
             animPlaying = false
             _G.invisibleStealEnabled = false
             clearFolders()
+            restoreStashed()
             return
         end
         SMKTInvisActive = true
@@ -663,11 +729,32 @@ local SMKTInvisActive = false
     _G.SMKTInvisStart = turnOn
     _G.SMKTInvisStop = turnOff
 
+    task.spawn(function()
+        while true do
+            task.wait(0.1)
+            if animPlaying then
+                local ok, inside = pcall(atMyBase)
+                if ok then
+                    if inside and not nearBase then
+                        nearBase = true
+                        pcall(restoreStashed)
+                    elseif not inside and nearBase then
+                        nearBase = false
+                        pcall(stashCurrent)
+                    end
+                end
+            elseif nearBase then
+                nearBase = false
+            end
+        end
+    end)
+
     LocalPlayer.CharacterAdded:Connect(function(newChar)
         clearLag()
         showVis()
-        laStop()
         clearFolders()
+        dropStashed()
+        laStop()
         pcall(function()
             for _, c in pairs(Workspace.CurrentCamera:GetChildren()) do
                 if c:IsA("BasePart") and c.Name == "HumanoidRootPart" then c:Destroy() end
@@ -790,6 +877,7 @@ local function wsStart()
         local hrp = c:FindFirstChild("HumanoidRootPart")
         if not hum or not hrp or hum.Health <= 0 then return end
         local want = math.clamp(tonumber(_G.SMKTWalkSpeed) or 16, 16, 29)
+        if LocalPlayer:GetAttribute("Stealing") == true then want = math.min(want, 22) end
         local md = hum.MoveDirection
         if md.Magnitude > 0 and want > hum.WalkSpeed then
             hrp.CFrame = hrp.CFrame + (md * (want - hum.WalkSpeed) * dt)
@@ -816,7 +904,6 @@ local function SaveSettings()
                 UnwalkSavedState = _G.UnwalkSavedState,
                 SMKTWalkSpeed = _G.SMKTWalkSpeed,
                 SMKTWalkSpeedOn = _G.SMKTWalkSpeedOn,
-                SMKTLocalNormalAnim = _G.SMKTLocalNormalAnim,
                 GuiPos = { XScale = _G.InvisGuiPosXScale or 0, XOffset = _G.InvisGuiPosXOffset or 20, YScale = _G.InvisGuiPosYScale or 0.25, YOffset = _G.InvisGuiPosYOffset or 0 }
             }))
         end
@@ -835,7 +922,6 @@ local function LoadSettings()
             if data.UnwalkSavedState ~= nil then _G.UnwalkSavedState = data.UnwalkSavedState end
             if data.SMKTWalkSpeed then _G.SMKTWalkSpeed = data.SMKTWalkSpeed end
             if data.SMKTWalkSpeedOn ~= nil then _G.SMKTWalkSpeedOn = data.SMKTWalkSpeedOn end
-            if data.SMKTLocalNormalAnim ~= nil then _G.SMKTLocalNormalAnim = data.SMKTLocalNormalAnim end
             if data.GuiPos then
                 _G.InvisGuiPosXScale = data.GuiPos.XScale or 0
                 _G.InvisGuiPosXOffset = data.GuiPos.XOffset or 20
