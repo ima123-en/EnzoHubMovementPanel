@@ -413,6 +413,97 @@ local SMKTInvisActive = false
     LocalPlayer:GetAttributeChangedSignal("Stealing"):Connect(syncAuto)
 end)()
 
+;(function()
+    local function strip()
+        local c = LocalPlayer.Character
+        local h = c and c:FindFirstChild("HumanoidRootPart")
+        if not h or not getconnections or not getinfo then return end
+        for _, s in ipairs({ "CFrame", "Position" }) do
+            pcall(function()
+                for _, cn in ipairs(getconnections(h:GetPropertyChangedSignal(s))) do
+                    if cn.Function and cn.Enabled then
+                        local ok, info = pcall(getinfo, cn.Function)
+                        if ok and info and tostring(info.source) == "=ReplicatedFirst.test" then
+                            pcall(function() cn:Disable() end)
+                        end
+                    end
+                end
+            end)
+        end
+    end
+    _G.SMKTStripAC = strip
+    task.spawn(function() while true do pcall(strip) task.wait(6) end end)
+    LocalPlayer.CharacterAdded:Connect(function() task.wait(0.3) pcall(strip) end)
+end)()
+
+do
+    if _G.SMKTNoPlayerCollide == nil then _G.SMKTNoPlayerCollide = true end
+    local seen = setmetatable({}, { __mode = "k" })
+
+    local function isClone(inst)
+        local n = inst.Name
+        return n:match("^%d+_Clone$") ~= nil or n:find("Clone", 1, true) ~= nil
+    end
+
+    local function declaw(part)
+        if not part:IsA("BasePart") then return end
+        if seen[part] and part.CanCollide == false then return end
+        seen[part] = true
+        pcall(function()
+            part.CanCollide = false
+            part.CanTouch = false
+        end)
+    end
+
+    local function pass(model)
+        if not model then return end
+        for _, d in ipairs(model:GetDescendants()) do declaw(d) end
+        if not seen[model] then
+            seen[model] = true
+            model.DescendantAdded:Connect(function(d)
+                if _G.SMKTNoPlayerCollide ~= false then declaw(d) end
+            end)
+        end
+    end
+
+    local function sweep()
+        if _G.SMKTNoPlayerCollide == false then return end
+        for _, pl in ipairs(Players:GetPlayers()) do
+            if pl ~= LocalPlayer and pl.Character then pass(pl.Character) end
+        end
+        for _, m in ipairs(workspace:GetChildren()) do
+            if m:IsA("Model") and m ~= LocalPlayer.Character and isClone(m) then pass(m) end
+        end
+    end
+
+    local function hookPlayer(pl)
+        if pl == LocalPlayer then return end
+        pl.CharacterAdded:Connect(function(c)
+            task.wait(0.2)
+            if _G.SMKTNoPlayerCollide ~= false then pass(c) end
+        end)
+    end
+    for _, pl in ipairs(Players:GetPlayers()) do hookPlayer(pl) end
+    Players.PlayerAdded:Connect(hookPlayer)
+
+    workspace.ChildAdded:Connect(function(m)
+        if _G.SMKTNoPlayerCollide == false then return end
+        if m:IsA("Model") and m ~= LocalPlayer.Character and isClone(m) then
+            task.wait(0.1)
+            pass(m)
+        end
+    end)
+
+    task.spawn(function()
+        pcall(sweep)
+        while true do
+            task.wait(8)
+            pcall(sweep)
+        end
+    end)
+    _G.SMKTNoCollideSweep = sweep
+end
+
 _G.SMKTWalkSpeed = _G.SMKTWalkSpeed or 16
 _G.SMKTWalkSpeedOn = _G.SMKTWalkSpeedOn or false
 local wsOn = _G.SMKTWalkSpeedOn or false
@@ -761,6 +852,11 @@ end))
 createToggleRow("Auto Invis on Steal", _G.SMKTInvisAuto, function(state)
     _G.SMKTInvisAuto = state
     SaveSettings()
+end)
+
+createToggleRow("No Collide", _G.SMKTNoPlayerCollide ~= false, function(state)
+    _G.SMKTNoPlayerCollide = state
+    if state and _G.SMKTNoCollideSweep then pcall(_G.SMKTNoCollideSweep) end
 end)
 
 createStepperRow("Rotation", 0, 360, 5,
