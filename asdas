@@ -197,226 +197,34 @@ end)
 
 local SMKTInvisActive = false
 ;(function()
-    local active, conns = false, {}
-    local realHRP, cloneHRP, track, hip, origT
-    local stuck, restarting = false, false
-    local start, stop
+    local animPlaying = false
+    local tracks = {}
+    local clone, oldRoot, hip, connection
+    local folderConns = {}
+    local savedT = {}
+    local lagCount, lagWindow, lastLag = 0, 0, 0
+    _G.SMKTAutoLagback = true
+    _G.SMKTRecovering = false
 
-    local function depth()
-        return 0.01 + (math.clamp(tonumber(_G.SMKTInvisDepth) or 4.2, 0, 10) / 10) * 0.19
-    end
-    local function angle()
-        return math.clamp(tonumber(_G.SMKTInvisAngle) or 180, 0, 360)
-    end
-    local function add(c) conns[#conns + 1] = c end
-    local function rewire(char, from, to)
-        for _, v in ipairs(char:GetDescendants()) do
-            if v:IsA("Weld") or v:IsA("Motor6D") then
-                if v.Part0 == from then v.Part0 = to end
-                if v.Part1 == from then v.Part1 = to end
+    local function hideVis()
+        local character = LocalPlayer.Character
+        if not character then return end
+        for _, part in ipairs(character:GetDescendants()) do
+            if part:IsA("BasePart") or part:IsA("Decal") then
+                savedT[part] = part.Transparency
+                part.Transparency = 1
             end
         end
     end
 
-    stop = function()
-        active, stuck = false, false
-        for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
-        conns = {}
-        if origT then
-            for p, v in pairs(origT) do
-                if p and p.Parent then pcall(function() p.LocalTransparencyModifier = v end) end
-            end
-            origT = nil
+    local function showVis()
+        for part, oldT in pairs(savedT) do
+            if part and part.Parent then part.Transparency = oldT end
         end
-        if track then
-            pcall(function() track:AdjustSpeed(1) track:Stop(0) track:Destroy() end)
-            track = nil
-        end
-        local char = LocalPlayer.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if realHRP and realHRP:IsDescendantOf(game) and hum then
-            local tmp = Instance.new("Model")
-            tmp.Parent = game
-            char.Parent = tmp
-            realHRP.Parent = char
-            char.PrimaryPart = realHRP
-            char.Parent = workspace
-            realHRP.CanCollide = true
-            rewire(char, cloneHRP, realHRP)
-            if cloneHRP then
-                local at = cloneHRP.CFrame
-                cloneHRP:Destroy()
-                cloneHRP = nil
-                realHRP.CFrame = at
-            end
-            hum.HipHeight = hip or 0
-            tmp:Destroy()
-        end
-        realHRP, cloneHRP = nil, nil
-        SMKTInvisActive = false
-        _G.invisibleStealEnabled = false
-        if _G.UpdateInvisButton then _G.UpdateInvisButton(false) end
+        savedT = {}
     end
 
-    local function animTrick(char, hum)
-        if not (char and hum and hum.Health > 0) then return end
-        local a = Instance.new("Animation")
-        a.AnimationId = "http://www.roblox.com/asset/?id=18537363391"
-        local animator = hum:FindFirstChildOfClass("Animator") or Instance.new("Animator", hum)
-        track = animator:LoadAnimation(a)
-        track.Priority = Enum.AnimationPriority.Action4
-        track.Looped = true
-        track:Play(0, 1, 0)
-        a:Destroy()
-        add(track.Stopped:Connect(function()
-            if active then animTrick(char, hum) end
-        end))
-        task.defer(function()
-            if not track then return end
-            track.TimePosition = 0.7
-            task.delay(0.1, function() if track then track:AdjustSpeed(math.huge) end end)
-        end)
-    end
-
-    start = function()
-        local char = LocalPlayer.Character
-        local hum = char and char:FindFirstChildOfClass("Humanoid")
-        if not hum or active then return false end
-
-        local folder = workspace:FindFirstChild(LocalPlayer.Name)
-        if folder then
-            for _, n in ipairs({ "DoubleRig", "Constraints" }) do
-                local x = folder:FindFirstChild(n)
-                if x then x:Destroy() end
-            end
-            add(folder.ChildAdded:Connect(function(c)
-                if c.Name == "DoubleRig" or c.Name == "Constraints" then c:Destroy() end
-            end))
-        end
-        for _, s in ipairs({ "Dead", "FallingDown", "Ragdoll" }) do
-            hum:SetStateEnabled(Enum.HumanoidStateType[s], false)
-        end
-
-        hip = hum.HipHeight
-        realHRP = char:FindFirstChild("HumanoidRootPart")
-        if not (realHRP and realHRP.Parent) then return false end
-
-        local tmp = Instance.new("Model")
-        tmp.Parent = game
-        char.Parent = tmp
-        cloneHRP = realHRP:Clone()
-        cloneHRP.Parent = char
-        realHRP.Parent = workspace.CurrentCamera
-        cloneHRP.CFrame = realHRP.CFrame
-        char.PrimaryPart = cloneHRP
-        char.Parent = workspace
-        rewire(char, realHRP, cloneHRP)
-        tmp:Destroy()
-
-        active = true
-        animTrick(char, hum)
-
-        origT = {}
-        for _, p in ipairs(char:GetDescendants()) do
-            if p:IsA("BasePart") then
-                origT[p] = p.LocalTransparencyModifier
-                p.LocalTransparencyModifier = 1
-            end
-        end
-        add(char.DescendantAdded:Connect(function(d)
-            if not (active and d:IsA("BasePart")) then return end
-            if origT and origT[d] == nil then origT[d] = d.LocalTransparencyModifier end
-            pcall(function() d.LocalTransparencyModifier = 1 end)
-        end))
-
-        add(RunService.Heartbeat:Connect(function()
-            if not active or not hum.Parent then return end
-            hum.Health = hum.MaxHealth
-            hum:SetStateEnabled(Enum.HumanoidStateType.Dead, false)
-            local st = hum:GetState()
-            if st == Enum.HumanoidStateType.Dead or st == Enum.HumanoidStateType.FallingDown
-                or st == Enum.HumanoidStateType.Ragdoll then
-                hum:ChangeState(Enum.HumanoidStateType.Running)
-            end
-        end))
-
-        local lastTarget, grace = nil, 60
-        add(RunService.PreSimulation:Connect(function()
-            if not (active and realHRP and hum.Health > 0) then return end
-            local base = char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")
-            if not base then return end
-            if grace > 0 then
-                grace = grace - 1
-            elseif not stuck and lastTarget then
-                local _drift = (realHRP.Position - lastTarget).Magnitude
-                local _cloneDrift = cloneHRP and (cloneHRP.Position - lastTarget).Magnitude or 0
-                if _drift > 2.25 or _cloneDrift > 8 then
-                    stuck = true
-                    if not restarting then
-                        task.spawn(function()
-                            restarting = true
-                            pcall(stop)
-                            task.wait(0.5)
-                            restarting = false
-                            local ok = pcall(start)
-                            if not ok then
-                                task.wait(1)
-                                pcall(start)
-                            end
-                        end)
-                    end
-                end
-            end
-            local cf = base.CFrame
-                - Vector3.new(0, hum.HipHeight + (base.Size.Y / 2) - 1 + depth(), 0)
-            realHRP.CFrame = cf * CFrame.Angles(math.rad(angle()), 0, 0)
-            realHRP.AssemblyLinearVelocity = base.AssemblyLinearVelocity
-            realHRP.CanCollide = false
-            if realHRP.Parent ~= workspace.CurrentCamera then
-                realHRP.Parent = workspace.CurrentCamera
-            end
-            lastTarget = cf.Position
-        end))
-
-        add(LocalPlayer.CharacterAdded:Connect(function() if active then stop() end end))
-        SMKTInvisActive = true
-        _G.invisibleStealEnabled = true
-        if _G.UpdateInvisButton then _G.UpdateInvisButton(true) end
-        return true
-    end
-
-    _G.SMKTInvisStart = start
-    _G.SMKTInvisStop = stop
-    _G.toggleInvisibleSteal = function()
-        if active then stop() else start() end
-    end
-
-    local armed, autoOn = false, false
-    local function syncAuto()
-        local want = (_G.SMKTInvisAuto == true) and (LocalPlayer:GetAttribute("Stealing") == true)
-        if not want then
-            armed = false
-            if active and autoOn then autoOn = false pcall(stop) end
-            return
-        end
-        if active or armed then return end
-        armed = true
-        task.delay(tonumber(_G.SMKTInvisAutoDelay) or 1.5, function()
-            armed = false
-            if _G.SMKTInvisAuto == true and not active
-                and LocalPlayer:GetAttribute("Stealing") == true then
-                autoOn = true
-                pcall(start)
-            end
-        end)
-    end
-    LocalPlayer:GetAttributeChangedSignal("Stealing"):Connect(syncAuto)
-end)()
-
-;(function()
-    local function strip()
-        local c = LocalPlayer.Character
-        local h = c and c:FindFirstChild("HumanoidRootPart")
+    local function stripAC(h)
         if not h or not getconnections or not getinfo then return end
         for _, s in ipairs({ "CFrame", "Position" }) do
             pcall(function()
@@ -431,77 +239,537 @@ end)()
             end)
         end
     end
-    _G.SMKTStripAC = strip
-    task.spawn(function() while true do pcall(strip) task.wait(6) end end)
-    LocalPlayer.CharacterAdded:Connect(function() task.wait(0.3) pcall(strip) end)
-end)()
+    _G.SMKTStripAC = function()
+        local c = LocalPlayer.Character
+        pcall(stripAC, c and c:FindFirstChild("HumanoidRootPart"))
+        if oldRoot then pcall(stripAC, oldRoot) end
+    end
+    task.spawn(function() while true do pcall(_G.SMKTStripAC) task.wait(6) end end)
+    LocalPlayer.CharacterAdded:Connect(function() task.wait(0.3) pcall(_G.SMKTStripAC) end)
 
-do
-    if _G.SMKTNoPlayerCollide == nil then _G.SMKTNoPlayerCollide = true end
-    local seen = setmetatable({}, { __mode = "k" })
-
-    local function isClone(inst)
-        local n = inst.Name
-        return n:match("^%d+_Clone$") ~= nil or n:find("Clone", 1, true) ~= nil
+    local function clearLag()
+        lagCount = 0
+        lastLag = 0
     end
 
-    local function declaw(part)
-        if not part:IsA("BasePart") then return end
-        if seen[part] and part.CanCollide == false then return end
-        seen[part] = true
-        pcall(function()
-            part.CanCollide = false
-            part.CanTouch = false
+    local function noteLagback()
+        local now = tick()
+        if now - lastLag < 0.15 then return end
+        lastLag = now
+        if now - lagWindow > 3 then
+            lagCount = 0
+            lagWindow = now
+        end
+        lagCount = lagCount + 1
+        if lagCount >= 15 then
+            if _G.toggleInvisibleSteal and _G.invisibleStealEnabled then
+                task.spawn(function() pcall(_G.toggleInvisibleSteal) end)
+            end
+            lagCount = 0
+        end
+    end
+
+    local function clearFolders()
+        for _, c in ipairs(folderConns) do pcall(function() c:Disconnect() end) end
+        folderConns = {}
+    end
+
+    local function removeFolders()
+        clearFolders()
+        local pf = Workspace:FindFirstChild(LocalPlayer.Name)
+        if not pf then return end
+        for _, n in ipairs({ "DoubleRig", "Constraints" }) do
+            local x = pf:FindFirstChild(n)
+            if x then pcall(function() x:Destroy() end) end
+        end
+        folderConns[#folderConns + 1] = pf.ChildAdded:Connect(function(child)
+            if child.Name == "DoubleRig" or child.Name == "Constraints" then
+                pcall(function() child:Destroy() end)
+            end
         end)
     end
 
-    local function pass(model)
-        if not model then return end
-        for _, d in ipairs(model:GetDescendants()) do declaw(d) end
-        if not seen[model] then
-            seen[model] = true
-            model.DescendantAdded:Connect(function(d)
-                if _G.SMKTNoPlayerCollide ~= false then declaw(d) end
+    local function doClone()
+        local character = LocalPlayer.Character
+        if not character then return false end
+        local humanoid = character:FindFirstChild("Humanoid")
+        if not humanoid or humanoid.Health <= 0 then return false end
+        hip = humanoid.HipHeight
+        oldRoot = character:FindFirstChild("HumanoidRootPart")
+        if not oldRoot or not oldRoot.Parent then return false end
+        local ok = pcall(function()
+            local tmp = Instance.new("Model")
+            tmp.Parent = game
+            character.Parent = tmp
+            clone = oldRoot:Clone()
+            clone.Parent = character
+            oldRoot.Parent = Workspace.CurrentCamera
+            clone.CFrame = oldRoot.CFrame
+            character.PrimaryPart = clone
+            character.Parent = Workspace
+            for _, v in pairs(character:GetDescendants()) do
+                if v:IsA("Weld") or v:IsA("Motor6D") then
+                    if v.Part0 == oldRoot then v.Part0 = clone end
+                    if v.Part1 == oldRoot then v.Part1 = clone end
+                end
+            end
+            tmp:Destroy()
+        end)
+        return ok
+    end
+
+    local function revertClone()
+        local character = LocalPlayer.Character
+        if not character then return end
+        local humanoid = character:FindFirstChild("Humanoid")
+        if not humanoid then return end
+        if not oldRoot or not oldRoot:IsDescendantOf(Workspace) then
+            if oldRoot then pcall(function() oldRoot:Destroy() end) end
+            oldRoot = nil
+            clone = nil
+            return
+        end
+        local ok = pcall(function()
+            local tmp = Instance.new("Model")
+            tmp.Parent = game
+            character.Parent = tmp
+            oldRoot.Parent = character
+            character.PrimaryPart = oldRoot
+            character.Parent = Workspace
+            oldRoot.CanCollide = true
+            for _, v in pairs(character:GetDescendants()) do
+                if v:IsA("Weld") or v:IsA("Motor6D") then
+                    if v.Part0 == clone then v.Part0 = oldRoot end
+                    if v.Part1 == clone then v.Part1 = oldRoot end
+                end
+            end
+            if clone then
+                local p = clone.CFrame
+                clone:Destroy()
+                clone = nil
+                oldRoot.CFrame = p
+            end
+            tmp:Destroy()
+        end)
+        if not ok then
+            if oldRoot then pcall(function() oldRoot:Destroy() end) end
+            if clone then pcall(function() clone:Destroy() end) end
+        end
+        oldRoot = nil
+        clone = nil
+        humanoid.HipHeight = hip or 0
+        clearLag()
+    end
+
+    local function animTrick()
+        local character = LocalPlayer.Character
+        if not character then return end
+        local humanoid = character:FindFirstChild("Humanoid")
+        if not humanoid or humanoid.Health <= 0 then return end
+        local anim = Instance.new("Animation")
+        anim.AnimationId = "http://www.roblox.com/asset/?id=18537363391"
+        local animator = humanoid:FindFirstChild("Animator") or Instance.new("Animator", humanoid)
+        local animTrack = animator:LoadAnimation(anim)
+        animTrack.Priority = Enum.AnimationPriority.Action4
+        animTrack.Looped = true
+        animTrack:Play(0, 1, 0)
+        anim:Destroy()
+        table.insert(tracks, animTrack)
+        animTrack.Stopped:Connect(function()
+            if animPlaying then animTrick() end
+        end)
+        task.defer(function()
+            if not animTrack then return end
+            animTrack.TimePosition = 0.7
+            task.delay(0.1, function()
+                if animTrack then animTrack:AdjustSpeed(math.huge) end
             end)
-        end
-    end
-
-    local function sweep()
-        if _G.SMKTNoPlayerCollide == false then return end
-        for _, pl in ipairs(Players:GetPlayers()) do
-            if pl ~= LocalPlayer and pl.Character then pass(pl.Character) end
-        end
-        for _, m in ipairs(workspace:GetChildren()) do
-            if m:IsA("Model") and m ~= LocalPlayer.Character and isClone(m) then pass(m) end
-        end
-    end
-
-    local function hookPlayer(pl)
-        if pl == LocalPlayer then return end
-        pl.CharacterAdded:Connect(function(c)
-            task.wait(0.2)
-            if _G.SMKTNoPlayerCollide ~= false then pass(c) end
         end)
     end
-    for _, pl in ipairs(Players:GetPlayers()) do hookPlayer(pl) end
-    Players.PlayerAdded:Connect(hookPlayer)
 
-    workspace.ChildAdded:Connect(function(m)
-        if _G.SMKTNoPlayerCollide == false then return end
-        if m:IsA("Model") and m ~= LocalPlayer.Character and isClone(m) then
+    _G.SMKTLocalNormalAnim = true
+    local LA = { dummy = nil, pairs = {}, tracks = {}, conns = {}, cur = nil }
+    local LA_DEFAULTS = {
+        idle = "rbxassetid://507766666", walk = "rbxassetid://507777826", run = "rbxassetid://507767714",
+        jump = "rbxassetid://507765000", fall = "rbxassetid://507767968",
+    }
+
+    local function laStop()
+        for _, c in ipairs(LA.conns) do pcall(function() c:Disconnect() end) end
+        LA.conns = {}
+        for _, t in pairs(LA.tracks) do pcall(function() t:Stop(0) t:Destroy() end) end
+        LA.tracks = {}
+        if LA.dummy then pcall(function() LA.dummy:Destroy() end) end
+        LA.dummy, LA.cur, LA.pairs = nil, nil, {}
+    end
+
+    local function laAnimId(char, key)
+        local a = char:FindFirstChild("Animate")
+        local v = a and a:FindFirstChild(key)
+        if v then
+            for _, x in ipairs(v:GetChildren()) do
+                if x:IsA("Animation") and x.AnimationId ~= "" then return x.AnimationId end
+            end
+        end
+        return LA_DEFAULTS[key]
+    end
+
+    local function laIsJoint(j)
+        return j:IsA("Motor6D") or j:IsA("AnimationConstraint")
+    end
+
+    local function laInfo(j)
+        if j:IsA("Motor6D") then
+            return j.Name, j.Part1 and j.Part1.Name
+        end
+        local a1 = j.Attachment1
+        return j.Name, a1 and a1.Parent and a1.Parent.Name
+    end
+
+    local function laStart(char, hum)
+        laStop()
+        if _G.SMKTLocalNormalAnim == false then return end
+        local ok, err = pcall(function()
+            local arch = {}
+            arch[char] = char.Archivable
+            char.Archivable = true
+            for _, x in ipairs(char:GetDescendants()) do
+                if not x.Archivable then
+                    arch[x] = false
+                    pcall(function() x.Archivable = true end)
+                end
+            end
+            local d = char:Clone()
+            for x, v in pairs(arch) do pcall(function() x.Archivable = v end) end
+            if not d then error("clone nil") end
+            d.Name = "SMKTLocalRig"
+            for _, x in ipairs(d:GetDescendants()) do
+                if x:IsA("LuaSourceContainer") or x:IsA("Sound") or x:IsA("BillboardGui") or x:IsA("SurfaceGui")
+                    or x:IsA("ParticleEmitter") or x:IsA("Beam") or x:IsA("Trail") then
+                    x:Destroy()
+                elseif x:IsA("BasePart") then
+                    x.Transparency = 1
+                    x.CanCollide = false
+                    x.CanQuery = false
+                    x.CanTouch = false
+                    x.Massless = true
+                elseif x:IsA("Decal") then
+                    x.Transparency = 1
+                end
+            end
+            local dRoot = d:FindFirstChild("HumanoidRootPart")
+            local dHum = d:FindFirstChildOfClass("Humanoid")
+            if not dRoot or not dHum then d:Destroy() error("kein HRP/Humanoid in Kopie") end
+            dRoot.Anchored = true
+            dRoot.CFrame = CFrame.new(0, 10000, 0)
+            dHum.DisplayDistanceType = Enum.HumanoidDisplayDistanceType.None
+            dHum.PlatformStand = true
+            local dAnimator = dHum:FindFirstChildOfClass("Animator") or Instance.new("Animator", dHum)
+            for _, t in ipairs(dAnimator:GetPlayingAnimationTracks()) do pcall(function() t:Stop(0) end) end
+            d.Parent = Workspace.CurrentCamera
+            LA.dummy = d
+
+            for _, key in ipairs({ "idle", "walk", "run", "jump", "fall" }) do
+                local id = laAnimId(char, key)
+                if id then
+                    local a = Instance.new("Animation")
+                    a.AnimationId = id
+                    local okT, tr = pcall(function() return dAnimator:LoadAnimation(a) end)
+                    a:Destroy()
+                    if okT and tr then
+                        tr.Looped = (key ~= "jump")
+                        LA.tracks[key] = tr
+                    end
+                end
+            end
+
+            local byFull, byP1, byName, nameCount = {}, {}, {}, {}
+            local nDummy, nReal = 0, 0
+            for _, j in ipairs(d:GetDescendants()) do
+                if laIsJoint(j) then
+                    nDummy += 1
+                    local n, p1 = laInfo(j)
+                    byFull[n .. "|" .. tostring(p1)] = j
+                    if p1 then byP1[p1] = j end
+                    nameCount[n] = (nameCount[n] or 0) + 1
+                    byName[n] = j
+                end
+            end
+            for _, j in ipairs(char:GetDescendants()) do
+                if laIsJoint(j) then
+                    nReal += 1
+                    local n, p1 = laInfo(j)
+                    local dj = byFull[n .. "|" .. tostring(p1)]
+                        or (p1 and byP1[p1])
+                        or (nameCount[n] == 1 and byName[n])
+                    if dj and dj.ClassName == j.ClassName then LA.pairs[#LA.pairs + 1] = { j, dj } end
+                end
+            end
+            LA.nReal, LA.nDummy = nReal, nDummy
+        end)
+        if not ok or not LA.dummy then
+            warn("[SMKT] Normal Anim Fehler: " .. tostring(err))
+            laStop()
+            return
+        end
+        local nT = 0
+        for _ in pairs(LA.tracks) do nT += 1 end
+        print(("[SMKT] Normal Anim aktiv: %d Gelenke verbunden (du: %d, Kopie: %d), %d Animationen"):format(#LA.pairs, LA.nReal or 0, LA.nDummy or 0, nT))
+        if LA.nReal == 0 then
+            local cls = {}
+            for _, x in ipairs(char:GetDescendants()) do
+                if x:IsA("JointInstance") or x:IsA("Constraint") then cls[x.ClassName] = (cls[x.ClassName] or 0) + 1 end
+            end
+            local s = {}
+            for k, v in pairs(cls) do s[#s + 1] = k .. "=" .. v end
+            print("[SMKT] Gelenk-Typen bei dir: " .. (#s > 0 and table.concat(s, ", ") or "keine"))
+        end
+
+        local function pick()
+            local st = hum:GetState()
+            if st == Enum.HumanoidStateType.Jumping then return "jump", 1 end
+            if st == Enum.HumanoidStateType.Freefall then return "fall", 1 end
+            local root = char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")
+            local v = root and root.AssemblyLinearVelocity or Vector3.zero
+            local sp = Vector3.new(v.X, 0, v.Z).Magnitude
+            if hum.MoveDirection.Magnitude > 0.05 and sp > 0.5 then
+                if sp > 18 and LA.tracks.run then return "run", sp / 16 end
+                return "walk", sp / 16
+            end
+            return "idle", 1
+        end
+
+        LA.conns[#LA.conns + 1] = RunService.Heartbeat:Connect(function()
+            if not LA.dummy then return end
+            local key, spd = pick()
+            local tr = LA.tracks[key] or LA.tracks.idle
+            if not tr then return end
+            if LA.cur ~= tr then
+                if LA.cur then pcall(function() LA.cur:Stop(0.15) end) end
+                pcall(function() tr:Play(0.15) end)
+                LA.cur = tr
+            end
+            pcall(function() tr:AdjustSpeed(math.clamp(spd or 1, 0.3, 3)) end)
+        end)
+
+        local function copy()
+            if not LA.dummy then return end
+            for _, p in ipairs(LA.pairs) do
+                local real, dm = p[1], p[2]
+                if real.Parent and dm.Parent then real.Transform = dm.Transform end
+            end
+        end
+        LA.conns[#LA.conns + 1] = RunService.PreSimulation:Connect(copy)
+        LA.conns[#LA.conns + 1] = RunService.Heartbeat:Connect(copy)
+        LA.conns[#LA.conns + 1] = RunService.RenderStepped:Connect(copy)
+    end
+    _G.SMKTLocalAnimStop = laStop
+
+    local turnOff, turnOn
+
+    turnOff = function()
+        clearLag()
+        _G.invisibleStealEnabled = false
+        SMKTInvisActive = false
+        if _G.UpdateInvisButton then _G.UpdateInvisButton(false) end
+        if not animPlaying then return end
+        animPlaying = false
+        local character = LocalPlayer.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        for _, t in pairs(tracks) do
+            pcall(function() t:AdjustSpeed(1) t:Stop(0) t:Destroy() end)
+        end
+        tracks = {}
+        if connection then
+            pcall(function() connection:Disconnect() end)
+            connection = nil
+        end
+        laStop()
+        clearFolders()
+        revertClone()
+        showVis()
+        if humanoid and humanoid.Health > 0 then
             task.wait(0.1)
-            pass(m)
+            pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+        end
+    end
+
+    turnOn = function()
+        if animPlaying then return end
+        local character = LocalPlayer.Character
+        if not character then return end
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+        if not humanoid or humanoid.Health <= 0 then return end
+        animPlaying = true
+        _G.invisibleStealEnabled = true
+        tracks = {}
+        pcall(stripAC, character:FindFirstChild("HumanoidRootPart"))
+        removeFolders()
+        if not doClone() then
+            animPlaying = false
+            _G.invisibleStealEnabled = false
+            clearFolders()
+            return
+        end
+        SMKTInvisActive = true
+        if _G.UpdateInvisButton then _G.UpdateInvisButton(true) end
+        pcall(laStart, character, humanoid)
+        task.wait(0.05)
+        animTrick()
+        local lastSetPosition = nil
+        local skipFrames = 5
+        connection = RunService.PreSimulation:Connect(function()
+            local char = LocalPlayer.Character
+            if not char then return end
+            local hum = char:FindFirstChild("Humanoid")
+            if not hum or hum.Health <= 0 then return end
+            if not oldRoot or not oldRoot.Parent then return end
+            local root = char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")
+            if not root then return end
+            if skipFrames > 0 then
+                skipFrames = skipFrames - 1
+                lastSetPosition = nil
+                return
+            end
+            if lastSetPosition then
+                local jumpDist = (oldRoot.Position - lastSetPosition).Magnitude
+                if jumpDist > 8 and not _G.SMKTRecovering then
+                    lastSetPosition = nil
+                    noteLagback()
+                    if _G.SMKTAutoLagback and _G.toggleInvisibleSteal then
+                        _G.SMKTRecovering = true
+                        task.spawn(function()
+                            pcall(_G.toggleInvisibleSteal)
+                            task.wait(0.5)
+                            pcall(_G.toggleInvisibleSteal)
+                            _G.SMKTRecovering = false
+                        end)
+                    end
+                end
+            end
+            local rotAngle = math.clamp(tonumber(_G.SMKTInvisAngle) or 180, 0, 360)
+            local d = 0.01 + (math.clamp(tonumber(_G.SMKTInvisDepth) or 4.2, 0, 10) / 10) * 0.19
+            local cf = root.CFrame - Vector3.new(0, hum.HipHeight + (root.Size.Y / 2) - 1 + d, 0)
+            oldRoot.CFrame = cf * CFrame.Angles(math.rad(rotAngle), 0, 0)
+            oldRoot.AssemblyLinearVelocity = root.AssemblyLinearVelocity
+            oldRoot.CanCollide = false
+            lastSetPosition = oldRoot.Position
+        end)
+    end
+
+    _G.toggleInvisibleSteal = function()
+        if animPlaying then turnOff() else turnOn() end
+    end
+    _G.SMKTInvisStart = turnOn
+    _G.SMKTInvisStop = turnOff
+
+    LocalPlayer.CharacterAdded:Connect(function(newChar)
+        clearLag()
+        showVis()
+        laStop()
+        clearFolders()
+        pcall(function()
+            for _, c in pairs(Workspace.CurrentCamera:GetChildren()) do
+                if c:IsA("BasePart") and c.Name == "HumanoidRootPart" then c:Destroy() end
+            end
+        end)
+        if oldRoot then pcall(function() oldRoot:Destroy() end); oldRoot = nil end
+        if clone then pcall(function() clone:Destroy() end); clone = nil end
+        if connection then pcall(function() connection:Disconnect() end); connection = nil end
+        animPlaying = false
+        _G.invisibleStealEnabled = false
+        SMKTInvisActive = false
+        if _G.UpdateInvisButton then _G.UpdateInvisButton(false) end
+        task.wait(0.2)
+        local camera = Workspace.CurrentCamera
+        local h = newChar and newChar:FindFirstChildOfClass("Humanoid")
+        if camera and h then
+            camera.CameraSubject = h
+            camera.CameraType = Enum.CameraType.Custom
         end
     end)
 
     task.spawn(function()
-        pcall(sweep)
-        while true do
-            task.wait(8)
-            pcall(sweep)
+        local wasStealing, autoEnabled = false, false
+        task.wait(1)
+        while task.wait(0.1) do
+            if _G.SMKTInvisAuto ~= true then
+                wasStealing, autoEnabled = false, false
+            else
+                local isStealing = LocalPlayer:GetAttribute("Stealing") == true
+                if isStealing and not wasStealing and not _G.invisibleStealEnabled then
+                    task.delay(0.5, function()
+                        if LocalPlayer:GetAttribute("Stealing") == true and not _G.invisibleStealEnabled then
+                            pcall(_G.toggleInvisibleSteal)
+                            autoEnabled = true
+                        end
+                    end)
+                end
+                if not isStealing and autoEnabled and _G.invisibleStealEnabled then
+                    pcall(_G.toggleInvisibleSteal)
+                    autoEnabled = false
+                end
+                wasStealing = isStealing
+            end
         end
     end)
-    _G.SMKTNoCollideSweep = sweep
+end)()
+
+do
+    _G.SMKTNoPlayerCollide = true
+    local clones = setmetatable({}, { __mode = "k" })
+
+    local function isCloneModel(m)
+        if not m:IsA("Model") then return false end
+        if not m:FindFirstChild("HumanoidRootPart") then return false end
+        if not m:FindFirstChildOfClass("Humanoid") then return false end
+        if Players:GetPlayerFromCharacter(m) then return false end
+        if m.Name:lower():find("clone", 1, true) then return true end
+        local head = m:FindFirstChild("Head")
+        return head ~= nil and head:IsA("BasePart")
+    end
+
+    local function consider(o)
+        if isCloneModel(o) then clones[o] = true end
+    end
+
+    Workspace.DescendantAdded:Connect(function(o)
+        if not o:IsA("Model") then return end
+        task.delay(0.5, function()
+            if o.Parent then pcall(consider, o) end
+        end)
+    end)
+
+    task.spawn(function()
+        local n = 0
+        for _, o in ipairs(Workspace:GetDescendants()) do
+            if o:IsA("Model") then pcall(consider, o) end
+            n += 1
+            if n % 3000 == 0 then task.wait() end
+        end
+    end)
+
+    RunService.Stepped:Connect(function()
+        if _G.SMKTNoPlayerCollide == false then return end
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr ~= LocalPlayer and plr.Character then
+                for _, p in ipairs(plr.Character:GetDescendants()) do
+                    if p:IsA("BasePart") and p.CanCollide then p.CanCollide = false end
+                end
+            end
+        end
+        for m in pairs(clones) do
+            if m.Parent then
+                for _, p in ipairs(m:GetDescendants()) do
+                    if p:IsA("BasePart") and p.CanCollide then p.CanCollide = false end
+                end
+            else
+                clones[m] = nil
+            end
+        end
+    end)
+
+    _G.SMKTNoCollideSweep = function() end
 end
 
 _G.SMKTWalkSpeed = _G.SMKTWalkSpeed or 16
@@ -548,6 +816,7 @@ local function SaveSettings()
                 UnwalkSavedState = _G.UnwalkSavedState,
                 SMKTWalkSpeed = _G.SMKTWalkSpeed,
                 SMKTWalkSpeedOn = _G.SMKTWalkSpeedOn,
+                SMKTLocalNormalAnim = _G.SMKTLocalNormalAnim,
                 GuiPos = { XScale = _G.InvisGuiPosXScale or 0, XOffset = _G.InvisGuiPosXOffset or 20, YScale = _G.InvisGuiPosYScale or 0.25, YOffset = _G.InvisGuiPosYOffset or 0 }
             }))
         end
@@ -566,6 +835,7 @@ local function LoadSettings()
             if data.UnwalkSavedState ~= nil then _G.UnwalkSavedState = data.UnwalkSavedState end
             if data.SMKTWalkSpeed then _G.SMKTWalkSpeed = data.SMKTWalkSpeed end
             if data.SMKTWalkSpeedOn ~= nil then _G.SMKTWalkSpeedOn = data.SMKTWalkSpeedOn end
+            if data.SMKTLocalNormalAnim ~= nil then _G.SMKTLocalNormalAnim = data.SMKTLocalNormalAnim end
             if data.GuiPos then
                 _G.InvisGuiPosXScale = data.GuiPos.XScale or 0
                 _G.InvisGuiPosXOffset = data.GuiPos.XOffset or 20
@@ -854,10 +1124,6 @@ createToggleRow("Auto Invis on Steal", _G.SMKTInvisAuto, function(state)
     SaveSettings()
 end)
 
-createToggleRow("No Collide", _G.SMKTNoPlayerCollide ~= false, function(state)
-    _G.SMKTNoPlayerCollide = state
-    if state and _G.SMKTNoCollideSweep then pcall(_G.SMKTNoCollideSweep) end
-end)
 
 createStepperRow("Rotation", 0, 360, 5,
     function() return _G.SMKTInvisAngle end,
